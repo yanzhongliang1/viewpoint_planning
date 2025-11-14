@@ -10,3 +10,4 @@ if __name__ == "__main__":
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())
+"D://Viewpoint Planning//Auto_Scan//scan_qt//scan_qt//resources//blade.ply"

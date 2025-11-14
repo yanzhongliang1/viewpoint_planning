@@ -47,7 +47,7 @@ class ModelController:
         self._update_bbox_from_current()
 
         # 重置视图
-        self._refresh_view()
+        self.view.render_scene(self.model, recenter=True)
         return True
 
     def save_ply(self, filename: str) -> bool:
@@ -67,20 +67,15 @@ class ModelController:
         print("保存 PLY 到:", filename, "结果:", ok)
         return bool(ok)
 
-    # 刷新接口
-    def _refresh_view(self, recenter=False):
-        """Controller 内部统一负责刷新视图"""
-        self.view.render_scene(self.model, recenter=recenter)
-
     # ----------- 显示参数/开关 -----------
 
     def set_point_size(self, size: float):
         self.model.point_size = max(1.0, float(size))
-        self._refresh_view(recenter=False)
+        self.view.render_scene(self.model, recenter=True)
 
     def toggle_bbox(self, show: bool):
         self.model.show_bbox = bool(show)
-        self._refresh_view()
+        self.view.render_scene(self.model, recenter=True)
 
     def toggle_use_sampled_pcd(self, use_pcd: bool, num_points: int = 200000):
         if self.model.base_geom is None:
@@ -95,6 +90,7 @@ class ModelController:
             self.model.current_geom = self.model.base_geom
 
         self._update_bbox_from_current()
+        self.view.render_scene(self.model, recenter=True)
 
     def apply_voxel_downsample(self, voxel_size: float):
         if self.model.base_geom is None:
@@ -114,24 +110,25 @@ class ModelController:
         self.model.current_geom = self.model.downsampled_pcd
 
         self._update_bbox_from_current()
-        self._refresh_view()
+        self.view.render_scene(self.model, recenter=True)
 
     def toggle_voxel_grid(self, show: bool):
         self.model.show_voxel = bool(show)
         if self.model.show_voxel:
             self._build_voxel_grid()
-        self._refresh_view()
+        self.view.render_scene(self.model, recenter=True)
 
     def set_voxel_size(self, voxel_size: float):
         self.model.voxel_size = max(1e-6, float(voxel_size))
         if self.model.show_voxel:
             self._build_voxel_grid()
+        self.view.render_scene(self.model, recenter=True)
 
     def toggle_show_normals(self, show: bool):
         self.model.show_normals = bool(show)
         if self.model.show_normals:
             self._build_normal_lines()
-        self._refresh_view()
+        self.view.render_scene(self.model, recenter=True)
 
     def set_normal_params(self, length=None, step=None, color=None):
         if length is not None:
@@ -143,6 +140,7 @@ class ModelController:
 
         if self.model.show_normals:
             self._build_normal_lines()
+        self.view.render_scene(self.model, recenter=True)
 
     def set_view(self, view_name: str):
         self.view.set_view_direction(self.model, view_name)

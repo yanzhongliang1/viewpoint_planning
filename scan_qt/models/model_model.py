@@ -1,42 +1,34 @@
-# scan_qt/models/model_model.py
+from dataclasses import dataclass, field
 import numpy as np
 
-
+@dataclass
 class ModelModel:
-    """
-    只存几何数据和显示/算法参数，不负责任何 UI 或 Open3D API 调用。
-    """
+    base_geom: object = None
+    current_geom: object = None
+    sampled_pcd: object = None
+    downsampled_pcd: object = None
 
-    def __init__(self):
-        # 几何对象
-        self.base_geom = None          # 原始网格/点云
-        self.current_geom = None       # 当前显示几何
-        self.sampled_pcd = None        # 网格采样点云
-        self.downsampled_pcd = None    # 降采样点云
+    bbox_geom: object = None
+    voxel_grid: object = None
+    normal_lines: object = None
 
-        # 辅助几何
-        self.bbox_geom = None
-        self.voxel_grid = None
-        self.normal_lines = None
+    show_bbox: bool = False
+    show_voxel: bool = False
+    show_normals: bool = False
+    use_sampled_pcd: bool = False
 
-        # 开关
-        self.show_bbox = False
-        self.show_voxel = False
-        self.show_normals = False
-        self.use_sampled_pcd = False
+    center: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    radius: float = 1.0
 
-        # 相机
-        self.center = np.array([0.0, 0.0, 0.0])
-        self.radius = 1.0
+    point_size: float = 1.0
+    default_pcd_color: np.ndarray = field(
+        default_factory=lambda: np.array([0.6, 0.6, 0.6])
+    )
 
-        # 点云渲染参数
-        self.point_size = 2.0
-        self.default_pcd_color = np.array([0.6, 0.6, 0.6])
+    normal_step: int = 10
+    normal_length: float = 0.01
+    normal_color: np.ndarray = field(
+        default_factory=lambda: np.array([1.0, 0.0, 0.0])
+    )
 
-        # 法向参数
-        self.normal_step = 10
-        self.normal_length = 0.01
-        self.normal_color = np.array([1.0, 0.0, 0.0])
-
-        # 体素参数
-        self.voxel_size = 0.01
+    voxel_size: float = 0.01
