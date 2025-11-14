@@ -1,0 +1,1 @@
+# scan_qt/views/camera_view.py

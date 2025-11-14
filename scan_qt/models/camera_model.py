@@ -1,0 +1,1 @@
+# scan_qt/models/camera_model.py

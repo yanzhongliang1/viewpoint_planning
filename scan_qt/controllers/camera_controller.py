@@ -1,0 +1,1 @@
+# scan_qt/controllers/camera_controller.py

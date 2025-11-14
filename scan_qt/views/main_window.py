@@ -1,4 +1,5 @@
-# scan_qt/open3d_main_window.py
+# scan_qt/views/main_window.py
+import os
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -6,32 +7,33 @@ from PyQt5.QtWidgets import (
     QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox
 )
 from PyQt5.QtCore import QTimer
-import os
 
-from visualization.open3d_v import Open3DController
+from scan_qt.models.model_model import ModelModel
+from scan_qt.views.model_view import ModelView
+from scan_qt.controllers.model_controller import ModelController
 
 
 class MainWindow(QMainWindow):
     """
-    NBV 控制面板（工业软件风格的参数面板）：
-    左边/上边是参数设置，Open3D 独立窗口负责三维显示
+    View（Qt）：只负责 UI，所有逻辑都丢给 controller。
     """
 
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("NBV 控制面板")
+        self.setWindowTitle("NBV 控制面板（MVC）")
         self.resize(800, 400)
 
-        # Open3D 控制器
-        self.o3d_ctrl = Open3DController()
+        # MVC 组件
+        self.model = ModelModel()
+        self.view3d = ModelView()
+        self.controller = ModelController(self.model, self.view3d)
 
         central = QWidget()
         self.setCentralWidget(central)
-
         main_layout = QVBoxLayout(central)
 
-        # -------------------- 文件操作模块 --------------------
+        # ---------------- 文件操作 ----------------
         file_group = QGroupBox("文件操作")
         file_layout = QHBoxLayout(file_group)
 
@@ -47,14 +49,12 @@ class MainWindow(QMainWindow):
         file_layout.addWidget(self.save_btn)
         file_layout.addWidget(self.file_label)
 
-        # -------------------- 显示与包围盒模块 --------------------
+        # ---------------- 显示与包围盒 ----------------
         display_group = QGroupBox("显示与包围盒")
         display_layout = QHBoxLayout(display_group)
 
         self.cb_show_bbox = QCheckBox("显示包围盒")
         self.cb_show_bbox.stateChanged.connect(self.on_bbox_toggled)
-
-        # 点大小
         display_layout.addWidget(self.cb_show_bbox)
 
         display_layout.addWidget(QLabel("点大小:"))
@@ -65,16 +65,14 @@ class MainWindow(QMainWindow):
         self.spin_point_size.valueChanged.connect(self.on_point_size_changed)
         display_layout.addWidget(self.spin_point_size)
 
-        # -------------------- 点云处理模块 --------------------
+        # ---------------- 点云处理 ----------------
         pcd_group = QGroupBox("点云处理")
         pcd_layout = QHBoxLayout(pcd_group)
 
-        # 点云模式（网格 -> 点云采样）
         self.cb_use_pcd = QCheckBox("点云模式(网格采样)")
         self.cb_use_pcd.stateChanged.connect(self.on_use_pcd_toggled)
         pcd_layout.addWidget(self.cb_use_pcd)
 
-        # 均匀采样点数
         pcd_layout.addWidget(QLabel("采样点数:"))
         self.spin_sample_points = QSpinBox()
         self.spin_sample_points.setRange(1000, 2_000_000)
@@ -82,7 +80,6 @@ class MainWindow(QMainWindow):
         self.spin_sample_points.setValue(200000)
         pcd_layout.addWidget(self.spin_sample_points)
 
-        # 降采样
         pcd_layout.addWidget(QLabel("降采样体素大小:"))
         self.spin_down_voxel = QDoubleSpinBox()
         self.spin_down_voxel.setDecimals(5)
@@ -95,7 +92,7 @@ class MainWindow(QMainWindow):
         self.btn_apply_downsample.clicked.connect(self.on_apply_downsample)
         pcd_layout.addWidget(self.btn_apply_downsample)
 
-        # -------------------- 体素分割（显示 VoxelGrid）模块 --------------------
+        # ---------------- 体素分割显示 ----------------
         voxel_group = QGroupBox("体素分割显示")
         voxel_layout = QHBoxLayout(voxel_group)
 
@@ -112,7 +109,7 @@ class MainWindow(QMainWindow):
         self.spin_voxel_size.valueChanged.connect(self.on_voxel_size_changed)
         voxel_layout.addWidget(self.spin_voxel_size)
 
-        # -------------------- 法向显示模块 --------------------
+        # ---------------- 法向显示 ----------------
         normal_group = QGroupBox("法向显示")
         normal_layout = QHBoxLayout(normal_group)
 
@@ -143,7 +140,7 @@ class MainWindow(QMainWindow):
         self.combo_normal_color.currentIndexChanged.connect(self.on_normal_params_changed)
         normal_layout.addWidget(self.combo_normal_color)
 
-        # -------------------- 视点设置模块（预留，将来可以替换为视角盒） --------------------
+        # ---------------- 视点 ----------------
         view_group = QGroupBox("视点设置（预留，可改视角盒）")
         view_layout = QHBoxLayout(view_group)
 
@@ -159,7 +156,7 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(lambda _, n=name: self.change_view(n))
             view_layout.addWidget(btn)
 
-        # -------------------- 把各模块加入主布局 --------------------
+        # ---------------- 布局汇总 ----------------
         main_layout.addWidget(file_group)
         main_layout.addWidget(display_group)
         main_layout.addWidget(pcd_group)
@@ -167,16 +164,12 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(normal_group)
         main_layout.addWidget(view_group)
 
-        # 预留额外区域，方便你后面再加模块
-        # extra_group = QGroupBox("预留模块")
-        # main_layout.addWidget(extra_group)
-
-        # -------------------- 定时更新 Open3D 窗口 --------------------
+        # ---------------- 定时更新 Open3D ----------------
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.o3d_ctrl.update)
-        self.timer.start(16)  # ~60 FPS
+        self.timer.timeout.connect(self.controller.update_view)
+        self.timer.start(16)
 
-    # -------------------- 文件操作 --------------------
+    # ----------- 文件操作 -----------
 
     def open_file(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -186,11 +179,8 @@ class MainWindow(QMainWindow):
             "PLY 文件 (*.ply);;所有文件 (*.*)",
         )
         if filename:
-            ok = self.o3d_ctrl.load_ply(filename)
-            if ok:
-                self.file_label.setText(os.path.basename(filename))
-            else:
-                self.file_label.setText("加载失败")
+            ok = self.controller.open_ply(filename)
+            self.file_label.setText(os.path.basename(filename) if ok else "加载失败")
 
     def save_file(self):
         filename, _ = QFileDialog.getSaveFileName(
@@ -202,39 +192,38 @@ class MainWindow(QMainWindow):
         if filename:
             if not filename.lower().endswith(".ply"):
                 filename += ".ply"
-            ok = self.o3d_ctrl.save_ply(filename)
-            if not ok:
-                self.file_label.setText("保存失败")
-            else:
-                self.file_label.setText("已保存: " + os.path.basename(filename))
+            ok = self.controller.save_ply(filename)
+            self.file_label.setText(
+                "已保存: " + os.path.basename(filename) if ok else "保存失败"
+            )
 
-    # -------------------- UI 事件处理：显示与包围盒 --------------------
+    # ----------- 显示与包围盒 -----------
 
     def on_bbox_toggled(self, state):
-        self.o3d_ctrl.toggle_bbox(bool(state))
+        self.controller.toggle_bbox(bool(state))
 
     def on_point_size_changed(self, value):
-        self.o3d_ctrl.set_point_size(float(value))
+        self.controller.set_point_size(float(value))
 
-    # -------------------- UI 事件处理：点云处理 --------------------
+    # ----------- 点云处理 -----------
 
     def on_use_pcd_toggled(self, state):
         num_points = self.spin_sample_points.value()
-        self.o3d_ctrl.toggle_use_sampled_pcd(bool(state), num_points=num_points)
+        self.controller.toggle_use_sampled_pcd(bool(state), num_points=num_points)
 
     def on_apply_downsample(self):
         voxel_size = self.spin_down_voxel.value()
-        self.o3d_ctrl.apply_voxel_downsample(voxel_size)
+        self.controller.apply_voxel_downsample(voxel_size)
 
-    # -------------------- UI 事件处理：体素分割显示 --------------------
+    # ----------- 体素分割显示 -----------
 
     def on_voxel_toggled(self, state):
-        self.o3d_ctrl.toggle_voxel_grid(bool(state))
+        self.controller.toggle_voxel_grid(bool(state))
 
     def on_voxel_size_changed(self, value):
-        self.o3d_ctrl.set_voxel_size(float(value))
+        self.controller.set_voxel_size(float(value))
 
-    # -------------------- UI 事件处理：法向显示 --------------------
+    # ----------- 法向显示 -----------
 
     def _get_normal_color_from_combo(self):
         text = self.combo_normal_color.currentText()
@@ -250,21 +239,21 @@ class MainWindow(QMainWindow):
             return (1.0, 0.0, 0.0)
 
     def on_show_normals_toggled(self, state):
-        self.o3d_ctrl.toggle_show_normals(bool(state))
+        self.controller.toggle_show_normals(bool(state))
 
     def on_normal_params_changed(self, *args):
         length = self.spin_normal_length.value()
         step = self.spin_normal_step.value()
         color = self._get_normal_color_from_combo()
-        self.o3d_ctrl.set_normal_params(length=length, step=step, color=color)
+        self.controller.set_normal_params(length=length, step=step, color=color)
 
-    # -------------------- UI 事件处理：视点 --------------------
+    # ----------- 视点 -----------
 
     def change_view(self, view_name: str):
-        self.o3d_ctrl.set_view(view_name)
+        self.controller.set_view(view_name)
 
-    # -------------------- 窗口关闭 --------------------
+    # ----------- 关闭事件 -----------
 
     def closeEvent(self, event):
-        self.o3d_ctrl.close()
+        self.controller.close()
         event.accept()
