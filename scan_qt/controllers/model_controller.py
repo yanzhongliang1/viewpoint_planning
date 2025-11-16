@@ -1,4 +1,4 @@
-# scan_qt/controllers/model_controller.py
+# scan_qt/controllers/nbv_controller.py
 import copy
 import numpy as np
 import open3d as o3d
@@ -71,11 +71,11 @@ class ModelController:
 
     def set_point_size(self, size: float):
         self.model.point_size = max(1.0, float(size))
-        self.view.render_scene(self.model, recenter=True)
+        self.view.render_scene(self.model, recenter=False)
 
     def toggle_bbox(self, show: bool):
         self.model.show_bbox = bool(show)
-        self.view.render_scene(self.model, recenter=True)
+        self.view.render_scene(self.model)
 
     def toggle_use_sampled_pcd(self, use_pcd: bool, num_points: int = 200000):
         if self.model.base_geom is None:
@@ -116,19 +116,19 @@ class ModelController:
         self.model.show_voxel = bool(show)
         if self.model.show_voxel:
             self._build_voxel_grid()
-        self.view.render_scene(self.model, recenter=True)
+        self.view.render_scene(self.model)
 
     def set_voxel_size(self, voxel_size: float):
         self.model.voxel_size = max(1e-6, float(voxel_size))
         if self.model.show_voxel:
             self._build_voxel_grid()
-        self.view.render_scene(self.model, recenter=True)
+        self.view.render_scene(self.model)
 
     def toggle_show_normals(self, show: bool):
         self.model.show_normals = bool(show)
         if self.model.show_normals:
             self._build_normal_lines()
-        self.view.render_scene(self.model, recenter=True)
+        self.view.render_scene(self.model)
 
     def set_normal_params(self, length=None, step=None, color=None):
         if length is not None:
@@ -140,7 +140,7 @@ class ModelController:
 
         if self.model.show_normals:
             self._build_normal_lines()
-        self.view.render_scene(self.model, recenter=True)
+        self.view.render_scene(self.model)
 
     def set_view(self, view_name: str):
         self.view.set_view_direction(self.model, view_name)
