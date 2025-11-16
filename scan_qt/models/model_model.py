@@ -34,6 +34,7 @@ class ModelModel:
         self.camera_frustums = []  # list[o3d.geometry.LineSet]
         # 多帧扫描点云（每次扫描一帧，加一个点云）
         self.scan_clouds = []  # list[o3d.geometry.PointCloud]
+        self.camera_axes_preview = None  # 当前参数下的预览坐标系
         self.show_camera = True
         self.show_scans = True
         # ====== 以上新增 ======

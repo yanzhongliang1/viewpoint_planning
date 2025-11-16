@@ -49,6 +49,41 @@ class ModelView:
         ctr.set_up([0, -1, 0])
         ctr.set_zoom(0.8)
 
+    def set_camera_pose(self, cam_position, cam_direction, cam_up=None, best_distance=1.0):
+        """
+        根据给定的相机位姿设置 Open3D 的视图。
+        cam_position: (3,) 相机位置
+        cam_direction: (3,) 相机朝向（从相机指向物体）
+        cam_up: (3,) 上方向（可选，None 时默认 [0,1,0] 去正交）
+        best_distance: 用来计算lookat = pos + dir * best_distance
+        """
+        if self.vis is None:
+            return
+
+        pos = np.asarray(cam_position, dtype=float)
+        front = np.asarray(cam_direction, dtype=float)
+        front = front / (np.linalg.norm(front) + 1e-12)
+
+        if cam_up is None:
+            up = np.array([0.0, 1.0, 0.0], dtype=float)
+        else:
+            up = np.asarray(cam_up, dtype=float)
+
+        # 上方向与 front 正交化
+        up = up - np.dot(up, front) * front
+        up = up / (np.linalg.norm(up) + 1e-12)
+
+        lookat = pos + front * float(best_distance)
+
+        ctr = self.vis.get_view_control()
+        ctr.set_lookat(lookat)
+        ctr.set_front(front)
+        ctr.set_up(up)
+        ctr.set_zoom(0.8)
+
+        self._safe_render()
+
+
     def set_view_direction(self, model: ModelModel, view_name: str):
         if self.vis is None or model.current_geom is None:
             return
@@ -105,6 +140,10 @@ class ModelView:
         if model.show_camera and model.camera_frustums:
             for frustum in model.camera_frustums:
                 self.vis.add_geometry(frustum)
+
+        # 预览用的小坐标系
+        if model.show_camera and getattr(model, "camera_axes_preview", None) is not None:
+            self.vis.add_geometry(model.camera_axes_preview)
 
         # ====== 新增：扫描结果点云 ======
         if model.show_scans and model.scan_clouds:
