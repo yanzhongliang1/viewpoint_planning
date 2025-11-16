@@ -101,6 +101,32 @@ class ModelView:
         if model.show_normals and model.normal_lines is not None:
             self.vis.add_geometry(model.normal_lines)
 
+        # ====== 新增：相机视锥 ======
+        if model.show_camera and model.camera_frustums:
+            for frustum in model.camera_frustums:
+                self.vis.add_geometry(frustum)
+
+        # ====== 新增：扫描结果点云 ======
+        if model.show_scans and model.scan_clouds:
+            for pcd in model.scan_clouds:
+                self.vis.add_geometry(pcd)
+        # ====== 新增结束 ======
+
+        # ===== 新增：多视点 + 扫描帧 =====
+        for rec in model.view_records:
+            if not rec.visible:
+                continue
+            # 视锥
+            if rec.frustum is not None:
+                self.vis.add_geometry(rec.frustum)
+            # 小坐标系
+            if rec.axes is not None:
+                self.vis.add_geometry(rec.axes)
+            # 扫描点云
+            if rec.scan_pcd is not None and model.show_scans:
+                self.vis.add_geometry(rec.scan_pcd)
+        # ===== 新增结束 =====
+
         # 相机
         if recenter:
             self._reset_camera_from_model(model)
