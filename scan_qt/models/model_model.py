@@ -1,4 +1,4 @@
-# scan_qt/models/scene_model.py
+# scan_qt/models/model_model.py
 import numpy as np
 
 

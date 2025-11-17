@@ -121,6 +121,18 @@ class ModelView:
         if self.vis is None or model.current_geom is None:
             return
 
+        ctr = self.vis.get_view_control()
+
+        # ===== 关键：如果不想重置视角，就先把当前视角参数保存下来 =====
+        saved_params = None
+        if not recenter:
+            try:
+                saved_params = ctr.convert_to_pinhole_camera_parameters()
+            except Exception as e:
+                print("保存视角参数失败:", e)
+                saved_params = None
+
+        # ===== 清空并重新添加几何 =====
         self.vis.clear_geometries()
 
         # 主几何
@@ -136,39 +148,41 @@ class ModelView:
         if model.show_normals and model.normal_lines is not None:
             self.vis.add_geometry(model.normal_lines)
 
-        # ====== 新增：相机视锥 ======
+        # 相机视锥（预览）
         if model.show_camera and model.camera_frustums:
             for frustum in model.camera_frustums:
                 self.vis.add_geometry(frustum)
 
-        # 预览用的小坐标系
         if model.show_camera and getattr(model, "camera_axes_preview", None) is not None:
             self.vis.add_geometry(model.camera_axes_preview)
 
-        # ====== 新增：扫描结果点云 ======
+        # 扫描点云（全局）
         if model.show_scans and model.scan_clouds:
             for pcd in model.scan_clouds:
                 self.vis.add_geometry(pcd)
-        # ====== 新增结束 ======
 
-        # ===== 新增：多视点 + 扫描帧 =====
+        # 多视点记录
         for rec in model.view_records:
             if not rec.visible:
                 continue
-            # 视锥
             if rec.frustum is not None:
                 self.vis.add_geometry(rec.frustum)
-            # 小坐标系
             if rec.axes is not None:
                 self.vis.add_geometry(rec.axes)
-            # 扫描点云
             if rec.scan_pcd is not None and model.show_scans:
                 self.vis.add_geometry(rec.scan_pcd)
-        # ===== 新增结束 =====
 
-        # 相机
+        # ===== 相机：要不要重置 lookat？ =====
         if recenter:
+            # 第一次加载模型 / 需要重新居中时用
             self._reset_camera_from_model(model)
+        else:
+            # 不想动视角：把之前保存的参数恢复回去
+            if saved_params is not None:
+                try:
+                    ctr.convert_from_pinhole_camera_parameters(saved_params)
+                except Exception as e:
+                    print("恢复视角参数失败:", e)
 
         # 渲染参数
         opt = self.vis.get_render_option()

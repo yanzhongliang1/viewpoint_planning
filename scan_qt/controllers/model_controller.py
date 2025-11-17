@@ -1,4 +1,4 @@
-# scan_qt/controllers/nbv_controller.py
+# scan_qt/controllers/model_controller.py
 import copy
 import numpy as np
 import open3d as o3d
