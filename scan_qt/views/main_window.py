@@ -4,10 +4,9 @@ import numpy as np
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QFileDialog, QLabel, QGroupBox,
-    QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox, QTableWidget, QTableWidgetItem,
-    QTabWidget, QScrollArea, QSplitter, QHeaderView
+    QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox, QTableWidget, QTableWidgetItem
 )
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import QTimer
 
 from scan_qt.models.model_model import ModelModel
 from scan_qt.views.model_view import ModelView
@@ -28,66 +27,64 @@ class MainWindow(QMainWindow):
 
         # ---- 基本窗口属性 ----
         self.setWindowTitle("NBV 控制面板（MVC）")
-        # 改成可缩放窗口，只给个合理的最小尺寸
-        self.resize(1300, 750)
-        self.setMinimumSize(1100, 650)
+        self.setFixedSize(1200, 700)
 
         self.setStyleSheet("""
-            QMainWindow {
-                background-color: #2b2b2b;
-                color: #dddddd;
-            }
-            QWidget {
-                background-color: #2b2b2b;
-                color: #dddddd;
-                font-size: 10pt;
-            }
-            QGroupBox {
-                border: 1px solid #555555;
-                border-radius: 4px;
-                margin-top: 8px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 3px 0 3px;
-            }
-            QLabel {
-                color: #dddddd;
-            }
-            QCheckBox, QRadioButton {
-                color: #dddddd;
-            }
-            QPushButton {
-                background-color: #444444;
-                border: 1px solid #666666;
-                border-radius: 3px;
-                padding: 4px 10px;
-            }
-            QPushButton:hover {
-                background-color: #555555;
-            }
-            QPushButton:pressed {
-                background-color: #333333;
-            }
-            QSpinBox, QDoubleSpinBox, QComboBox {
-                background-color: #3b3b3b;
-                color: #dddddd;
-                border: 1px solid #555555;
-                border-radius: 2px;
-            }
-            QTableWidget {
-                background-color: #3b3b3b;
-                color: #dddddd;
-                gridline-color: #555555;
-            }
-            QHeaderView::section {
-                background-color: #3b3b3b;
-                color: #dddddd;
-                padding: 3px;
-                border: 1px solid #555555;
-            }
-        """)
+                    QMainWindow {
+                        background-color: #2b2b2b;
+                        color: #dddddd;
+                    }
+                    QWidget {
+                        background-color: #2b2b2b;
+                        color: #dddddd;
+                        font-size: 10pt;
+                    }
+                    QGroupBox {
+                        border: 1px solid #555555;
+                        border-radius: 4px;
+                        margin-top: 8px;
+                    }
+                    QGroupBox::title {
+                        subcontrol-origin: margin;
+                        left: 8px;
+                        padding: 0 3px 0 3px;
+                    }
+                    QLabel {
+                        color: #dddddd;
+                    }
+                    QCheckBox, QRadioButton {
+                        color: #dddddd;
+                    }
+                    QPushButton {
+                        background-color: #444444;
+                        border: 1px solid #666666;
+                        border-radius: 3px;
+                        padding: 4px 10px;
+                    }
+                    QPushButton:hover {
+                        background-color: #555555;
+                    }
+                    QPushButton:pressed {
+                        background-color: #333333;
+                    }
+                    QSpinBox, QDoubleSpinBox, QComboBox {
+                        background-color: #3b3b3b;
+                        color: #dddddd;
+                        border: 1px solid #555555;
+                        border-radius: 2px;
+                    }
+                    QTableWidget {
+                        background-color: #3b3b3b;
+                        color: #dddddd;
+                        gridline-color: #555555;
+                    }
+                    QHeaderView::section {
+                        background-color: #3b3b3b;
+                        color: #dddddd;
+                        padding: 3px;
+                        border: 1px solid #555555;
+                    }
+                """)
 
         # ---- MVC 组件 ----
         self.model = ModelModel()
@@ -100,43 +97,24 @@ class MainWindow(QMainWindow):
         # 槽函数管理类
         self.slots = MainWindowSlots(self)
 
-        # ---- 中心布局：左右分栏，用 QSplitter 方便缩放 ----
+        # ---- 中心布局：左右两列 ----
         central = QWidget()
         self.setCentralWidget(central)
-        central_layout = QHBoxLayout(central)
-        central_layout.setContentsMargins(6, 6, 6, 6)
-        central_layout.setSpacing(4)
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(8)
 
-        splitter = QSplitter(Qt.Horizontal)
-        central_layout.addWidget(splitter)
+        left_layout = QVBoxLayout()   # 左列：文件 + 显示 + 视点/相机
+        right_layout = QVBoxLayout()  # 右列：点云处理 + 扫描帧管理
 
-        # ===================== 左侧：控制面板（滚动区域） =====================
-        left_scroll = QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        splitter.addWidget(left_scroll)
-
-        left_container = QWidget()
-        left_scroll.setWidget(left_container)
-        left_layout = QVBoxLayout(left_container)
-        left_layout.setContentsMargins(4, 4, 4, 4)
-        left_layout.setSpacing(6)
-
-        # ===================== 右侧：点云处理 + 视点表 =====================
-        right_panel = QWidget()
-        splitter.addWidget(right_panel)
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(4, 4, 4, 4)
-        right_layout.setSpacing(6)
-
-        splitter.setStretchFactor(0, 2)   # 左边稍窄
-        splitter.setStretchFactor(1, 3)   # 右边稍宽（给表格和未来 NBV 预留空间）
+        main_layout.addLayout(left_layout, 2)
+        main_layout.addLayout(right_layout, 3)
 
         # =========================================================
-        # 左列：文件操作
+        # 左列上：文件操作
         # =========================================================
         file_group = QGroupBox("文件操作")
         file_layout = QHBoxLayout(file_group)
-        file_layout.setContentsMargins(6, 6, 6, 6)
 
         self.open_btn = QPushButton("打开 PLY")
         self.open_btn.clicked.connect(self.slots.open_file)
@@ -145,20 +123,18 @@ class MainWindow(QMainWindow):
         self.save_btn.clicked.connect(self.slots.save_file)
 
         self.file_label = QLabel("未选择文件")
-        self.file_label.setMinimumWidth(200)
 
         file_layout.addWidget(self.open_btn)
         file_layout.addWidget(self.save_btn)
-        file_layout.addWidget(self.file_label, stretch=1)
+        file_layout.addWidget(self.file_label)
 
         left_layout.addWidget(file_group)
 
         # =========================================================
-        # 左列：显示与包围盒 + 视点切换
+        # 左列中：显示与包围盒 + 视点切换
         # =========================================================
         display_group = QGroupBox("显示与包围盒")
         display_layout = QHBoxLayout(display_group)
-        display_layout.setContentsMargins(6, 6, 6, 6)
 
         self.cb_show_bbox = QCheckBox("显示包围盒")
         self.cb_show_bbox.stateChanged.connect(self.slots.on_bbox_toggled)
@@ -169,18 +145,12 @@ class MainWindow(QMainWindow):
         self.spin_point_size.setRange(1.0, 20.0)
         self.spin_point_size.setSingleStep(0.5)
         self.spin_point_size.setValue(2.0)
-        self.spin_point_size.setMaximumWidth(80)
         self.spin_point_size.valueChanged.connect(self.slots.on_point_size_changed)
         display_layout.addWidget(self.spin_point_size)
-
-        display_layout.addStretch(1)
-        left_layout.addWidget(display_group)
 
         # 视点按钮（前后左右上下）
         view_group = QGroupBox("视点切换")
         view_layout = QHBoxLayout(view_group)
-        view_layout.setContentsMargins(6, 6, 6, 6)
-
         for text, name in [
             ("前视", "front"),
             ("后视", "back"),
@@ -194,11 +164,11 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(lambda _, n=name: self.slots.change_view(n))
             view_layout.addWidget(btn)
 
-        view_layout.addStretch(1)
+        left_layout.addWidget(display_group)
         left_layout.addWidget(view_group)
 
         # =========================================================
-        # 左列：扫描仪 / Camera 参数
+        # 左列下：扫描仪 / Camera 参数
         # =========================================================
         camera_group = QGroupBox("扫描仪 / Camera 参数")
         cam_main_layout = QHBoxLayout(camera_group)
@@ -285,7 +255,7 @@ class MainWindow(QMainWindow):
         self.spin_cam_dirz.setValue(self.camera_model.direction[2])
         self.spin_cam_dirz.setMaximumWidth(80)
 
-        # 放进网格（保持原始行排列）
+        # 放进网格
         row = 0
         param_layout.addWidget(lbl_fov, row, 0)
         param_layout.addWidget(self.spin_cam_fov, row, 1)
@@ -328,7 +298,6 @@ class MainWindow(QMainWindow):
         self.combo_scan_color.addItems(["自动", "红", "绿", "蓝", "黄", "白"])
         self.combo_scan_color.setMaximumWidth(80)
         color_layout.addWidget(self.combo_scan_color)
-        color_layout.addStretch(1)
         op_layout.addLayout(color_layout)
 
         self.cb_use_occlusion = QCheckBox("遮挡检测 (ray casting)")
@@ -350,10 +319,9 @@ class MainWindow(QMainWindow):
         cam_main_layout.addLayout(op_layout, stretch=2)
 
         left_layout.addWidget(camera_group)
-        left_layout.addStretch(1)   # 左侧控制整体往上顶一顶
 
         # =========================================================
-        # 右列上：点云处理 + 体素 + 法向（放进 Tab 里）
+        # 右列上：点云处理 + 体素 + 法向
         # =========================================================
         pcd_group = QGroupBox("点云处理")
         pcd_layout = QHBoxLayout(pcd_group)
@@ -380,7 +348,6 @@ class MainWindow(QMainWindow):
         self.btn_apply_downsample = QPushButton("应用降采样")
         self.btn_apply_downsample.clicked.connect(self.slots.on_apply_downsample)
         pcd_layout.addWidget(self.btn_apply_downsample)
-        pcd_layout.addStretch(1)
 
         voxel_group = QGroupBox("体素分割显示")
         voxel_layout = QHBoxLayout(voxel_group)
@@ -397,7 +364,6 @@ class MainWindow(QMainWindow):
         self.spin_voxel_size.setValue(0.01)
         self.spin_voxel_size.valueChanged.connect(self.slots.on_voxel_size_changed)
         voxel_layout.addWidget(self.spin_voxel_size)
-        voxel_layout.addStretch(1)
 
         normal_group = QGroupBox("法向显示")
         normal_layout = QHBoxLayout(normal_group)
@@ -428,14 +394,10 @@ class MainWindow(QMainWindow):
         self.combo_normal_color.addItems(["红", "绿", "蓝", "白"])
         self.combo_normal_color.currentIndexChanged.connect(self.slots.on_normal_params_changed)
         normal_layout.addWidget(self.combo_normal_color)
-        normal_layout.addStretch(1)
 
-        # 用 Tab 收纳三个 group，节省垂直空间
-        processing_tabs = QTabWidget()
-        processing_tabs.addTab(pcd_group, "点云处理")
-        processing_tabs.addTab(voxel_group, "体素")
-        processing_tabs.addTab(normal_group, "法向")
-        right_layout.addWidget(processing_tabs, stretch=1)
+        right_layout.addWidget(pcd_group)
+        right_layout.addWidget(voxel_group)
+        right_layout.addWidget(normal_group)
 
         # =========================================================
         # 右列下：视点 / 扫描帧管理表格
@@ -445,44 +407,31 @@ class MainWindow(QMainWindow):
 
         self.view_table = QTableWidget(0, 3)
         self.view_table.setHorizontalHeaderLabels(["名称", "可见", "颜色"])
-        header = self.view_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-
+        self.view_table.horizontalHeader().setStretchLastSection(True)
         self.view_table.itemDoubleClicked.connect(self.slots.on_view_table_double_clicked)
         views_layout.addWidget(self.view_table)
 
-        btn_row_layout = QHBoxLayout()
         self.btn_delete_view = QPushButton("删除选中视点")
         self.btn_delete_view.clicked.connect(self.slots.on_delete_selected_view)
-        btn_row_layout.addWidget(self.btn_delete_view)
+        views_layout.addWidget(self.btn_delete_view)
 
         self.btn_save_views = QPushButton("保存所有视点")
         self.btn_save_views.clicked.connect(self.slots.on_save_views_clicked)
-        btn_row_layout.addWidget(self.btn_save_views)
+        views_layout.addWidget(self.btn_save_views)
 
         self.btn_show_only_selected = QPushButton("只显示选中扫描帧")
         self.btn_show_only_selected.clicked.connect(self.slots.on_show_only_selected_scan)
-        btn_row_layout.addWidget(self.btn_show_only_selected)
+        views_layout.addWidget(self.btn_show_only_selected)
 
-        btn_row_layout.addStretch(1)
-        views_layout.addLayout(btn_row_layout)
-
-        # 第二排导出按钮
-        export_btn_layout = QHBoxLayout()
         self.btn_export_selected_scan = QPushButton("导出选中扫描帧")
         self.btn_export_selected_scan.clicked.connect(self.slots.on_export_selected_scan)
-        export_btn_layout.addWidget(self.btn_export_selected_scan)
+        views_layout.addWidget(self.btn_export_selected_scan)
 
         self.btn_export_all_scans = QPushButton("导出所有扫描点云")
         self.btn_export_all_scans.clicked.connect(self.slots.on_export_all_scans)
-        export_btn_layout.addWidget(self.btn_export_all_scans)
+        views_layout.addWidget(self.btn_export_all_scans)
 
-        export_btn_layout.addStretch(1)
-        views_layout.addLayout(export_btn_layout)
-
-        right_layout.addWidget(views_group, stretch=2)
+        right_layout.addWidget(views_group, stretch=1)
 
         # ---------------- 定时更新 Open3D ----------------
         self.timer = QTimer(self)
