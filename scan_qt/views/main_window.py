@@ -440,4 +440,3 @@ class MainWindow(QMainWindow):
 
         # 初始化视点表格
         self.slots.refresh_view_table()
-
