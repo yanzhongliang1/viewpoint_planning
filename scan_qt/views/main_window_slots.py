@@ -301,3 +301,9 @@ class MainWindowSlots(QObject):
         if not filename.lower().endswith(".ply"):
             filename += ".ply"
         win.camera_controller.export_all_scans(filename)
+
+    # ----------- 关闭事件 -----------
+
+    def closeEvent(self, event):
+        self.win.controller.close()
+        event.accept()
