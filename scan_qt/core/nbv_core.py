@@ -1,384 +1,332 @@
 # scan_qt/core/nbv_core.py
-import copy
 import numpy as np
 import open3d as o3d
 
 from scan_qt.models.camera_model import CameraModel
-from scan_qt.core.camera_core import (
-    simulate_scan_raycast,
-    simulate_scan_simple,
-)
+from scan_qt.core.camera_core import simulate_scan_raycast
 
 
 class CoverageGrid:
     """
-    用规则体素网格描述覆盖率：
-    - 空间范围：bmin ~ bmax（来自模型 AABB）
-    - 分辨率：voxel_size
-    - visited[i,j,k] = 0/1，表示该 voxel 是否已被扫描到
+    用体素网格来记录覆盖情况：
+    - bmin, bmax: AABB
+    - voxel_size
+    - visited: 3D uint8 数组，0=未观测，1=已观测
     """
 
     def __init__(self, bmin, bmax, voxel_size: float):
-        self.bmin = np.asarray(bmin, dtype=float)
-        self.bmax = np.asarray(bmax, dtype=float)
+        self.bmin = np.array(bmin, dtype=float).copy()
+        self.bmax = np.array(bmax, dtype=float).copy()
         self.voxel_size = float(voxel_size)
 
-        extent = self.bmax - self.bmin
+        extent = np.maximum(self.bmax - self.bmin, 1e-6)
         grid_size = np.ceil(extent / self.voxel_size).astype(int)
-        grid_size = np.maximum(grid_size, 1)
         self.grid_size = grid_size  # (nx, ny, nz)
 
-        self.visited = np.zeros(
-            (grid_size[0], grid_size[1], grid_size[2]), dtype=np.uint8
-        )
+        self.visited = np.zeros(grid_size, dtype=np.uint8)
 
-    @property
-    def total_voxels(self) -> int:
-        return int(self.visited.size)
-
-    @property
-    def covered_voxels(self) -> int:
-        return int(self.visited.sum())
-
-    def _points_to_indices(self, pts: np.ndarray):
+    def world_to_grid_index(self, pts: np.ndarray):
         """
-        把世界坐标点映射到 voxel 索引 (i,j,k)，过滤掉越界的。
-        pts: [N,3]
-        返回：indices: [M,3] int
+        pts: (N,3) 世界坐标点
+        返回：valid_mask (N,), idx (N,3) int
         """
-        if pts.size == 0:
-            return np.zeros((0, 3), dtype=np.int32)
-
+        pts = np.asarray(pts, dtype=float)
         rel = (pts - self.bmin.reshape(1, 3)) / self.voxel_size
-        idx = np.floor(rel).astype(np.int32)  # [N,3]
+        idx = np.floor(rel).astype(int)  # (N,3)
 
-        # 过滤在 [0, nx/ny/nz) 内的
         valid = (
-            (idx[:, 0] >= 0)
-            & (idx[:, 1] >= 0)
-            & (idx[:, 2] >= 0)
-            & (idx[:, 0] < self.grid_size[0])
-            & (idx[:, 1] < self.grid_size[1])
-            & (idx[:, 2] < self.grid_size[2])
+            (idx[:, 0] >= 0) & (idx[:, 0] < self.grid_size[0]) &
+            (idx[:, 1] >= 0) & (idx[:, 1] < self.grid_size[1]) &
+            (idx[:, 2] >= 0) & (idx[:, 2] < self.grid_size[2])
         )
-        idx = idx[valid]
-        if idx.size == 0:
-            return np.zeros((0, 3), dtype=np.int32)
+        return valid, idx
 
-        # 去重，避免同一 voxel 重复
-        # 先线性化
-        lin = (
-            idx[:, 0]
-            + idx[:, 1] * self.grid_size[0]
-            + idx[:, 2] * self.grid_size[0] * self.grid_size[1]
-        )
-        lin_unique, _ = np.unique(lin, return_index=True)
-        # 反解回 (i,j,k)
-        i = lin_unique % self.grid_size[0]
-        j = (lin_unique // self.grid_size[0]) % self.grid_size[1]
-        k = lin_unique // (self.grid_size[0] * self.grid_size[1])
-        idx_unique = np.stack([i, j, k], axis=1).astype(np.int32)
-        return idx_unique
+    def total_voxels(self):
+        return int(self.grid_size[0] * self.grid_size[1] * self.grid_size[2])
 
-    def compute_gain(self, scan_pcd: o3d.geometry.PointCloud) -> int:
-        """
-        仅计算“如果把这帧扫描融合进来，会增加多少个新覆盖体素”，不修改 visited。
-        """
-        if scan_pcd is None or scan_pcd.is_empty():
-            return 0
+    def covered_voxels(self):
+        return int(np.count_nonzero(self.visited))
 
-        pts = np.asarray(scan_pcd.points)
-        idx = self._points_to_indices(pts)
-        if idx.size == 0:
-            return 0
-
-        # 统计 visited==0 的 voxel 数量
-        gain = 0
-        for i, j, k in idx:
-            if self.visited[i, j, k] == 0:
-                gain += 1
-        return gain
-
-    def update_with_scan(self, scan_pcd: o3d.geometry.PointCloud) -> int:
-        """
-        真正把这帧扫描写入 visited，并返回本次新增覆盖的 voxel 数。
-        """
-        if scan_pcd is None or scan_pcd.is_empty():
-            return 0
-
-        pts = np.asarray(scan_pcd.points)
-        idx = self._points_to_indices(pts)
-        if idx.size == 0:
-            return 0
-
-        gain = 0
-        for i, j, k in idx:
-            if self.visited[i, j, k] == 0:
-                self.visited[i, j, k] = 1
-                gain += 1
-        return gain
+    def coverage_ratio(self):
+        return self.covered_voxels() / max(1, self.total_voxels())
 
 
-def build_initial_coverage_grid(geom, voxel_size: float) -> CoverageGrid:
+def build_coverage_grid_from_geom(geom, voxel_size: float) -> CoverageGrid:
     """
-    根据当前几何（mesh 或 pcd）的 AABB 构造 CoverageGrid。
+    根据几何体（TriangleMesh 或 PointCloud）自动构建覆盖网格。
+    自动检查总体素数，如果太大则放大 voxel_size 以控制内存占用。
     """
+    if geom is None:
+        raise ValueError("geom is None")
+
     bbox = geom.get_axis_aligned_bounding_box()
 
-    # 注意：一定要 copy，避免得到只读数组
-    bmin = np.array(bbox.min_bound, dtype=float)  # 或者 np.asarray(...).copy()
-    bmax = np.array(bbox.max_bound, dtype=float)
+    # 注意：min_bound / max_bound 可能返回只读数组，这里显式 copy 一份
+    bmin = np.array(bbox.min_bound, dtype=float).copy()
+    bmax = np.array(bbox.max_bound, dtype=float).copy()
 
-    # 略微扩一点 margin，防止边界数值误差
-    margin = 1e-3 * np.linalg.norm(bmax - bmin)
-    bmin = bmin - margin
-    bmax = bmax + margin
+    # 稍微扩一下边界，避免点在边界上被裁掉
+    padding = 0.01 * np.linalg.norm(bmax - bmin)
+    if not np.isfinite(padding) or padding <= 0:
+        padding = 1e-3
 
-    return CoverageGrid(bmin, bmax, voxel_size)
+    bmin = bmin - padding
+    bmax = bmax + padding
+
+    extent = np.maximum(bmax - bmin, 1e-6)
+
+    # --- 安全控制：限制总体素数 ---
+    # 你可以根据机器内存调整这个上限，比如 20~50M
+    MAX_VOXELS = 30_000_000  # 3e7，大约 30MB 的 uint8 数组
+
+    # 用户请求的体素
+    user_voxel = float(voxel_size)
+
+    # 用用户给的 voxel_size 估算一下体素数量
+    grid_size_est = np.ceil(extent / user_voxel).astype(int)
+    est_voxels = int(grid_size_est[0] * grid_size_est[1] * grid_size_est[2])
+
+    if est_voxels > MAX_VOXELS:
+        # 算一下最小需要的 voxel_size，使得总体素数 <= MAX_VOXELS
+        # 简单做法：假设三维各向同性，令 (Lx/v)^3 ≈ MAX_VOXELS
+        # 这里取 max_extent，这样保证不超过上限
+        max_extent = float(np.max(extent))
+        target_res_1d = int(round(MAX_VOXELS ** (1.0 / 3.0)))  # 1D 上的目标格数
+        min_voxel = max_extent / max(target_res_1d, 1)
+
+        eff_voxel = max(user_voxel, min_voxel)
+        print(
+            f"[NBV] Requested voxel_size={user_voxel} leads to "
+            f"{est_voxels} voxels, too many. "
+            f"Adjusted voxel_size to {eff_voxel:.4f} for coverage grid."
+        )
+        voxel_size_eff = eff_voxel
+    else:
+        voxel_size_eff = user_voxel
+
+    return CoverageGrid(bmin, bmax, voxel_size_eff)
+
+
+def update_coverage_from_scan(coverage: CoverageGrid,
+                              scan_pcd: o3d.geometry.PointCloud) -> int:
+    """
+    把一次扫描点云真正写入 coverage.visited。
+    返回：这次扫描带来的“新增覆盖体素数”。
+    """
+    if coverage is None:
+        return 0
+    if scan_pcd is None or scan_pcd.is_empty():
+        return 0
+
+    pts = np.asarray(scan_pcd.points)
+    if pts.shape[0] == 0:
+        return 0
+
+    valid, idx = coverage.world_to_grid_index(pts)
+    idx = idx[valid]
+    if idx.shape[0] == 0:
+        return 0
+
+    # 先找出哪些体素原来是0，将变成1
+    # 使用 unique 保证每个体素只算一次
+    flat_idx = (
+        idx[:, 0] * (coverage.grid_size[1] * coverage.grid_size[2]) +
+        idx[:, 1] * coverage.grid_size[2] +
+        idx[:, 2]
+    )
+    unique_flat = np.unique(flat_idx)
+
+    z = unique_flat % coverage.grid_size[2]
+    y = (unique_flat // coverage.grid_size[2]) % coverage.grid_size[1]
+    x = unique_flat // (coverage.grid_size[1] * coverage.grid_size[2])
+
+    before = coverage.visited[x, y, z]
+    new_voxels = np.count_nonzero(before == 0)
+
+    coverage.visited[x, y, z] = 1
+
+    return int(new_voxels)
+
+
+def estimate_coverage_gain_without_commit(coverage: CoverageGrid,
+                                          scan_pcd: o3d.geometry.PointCloud) -> int:
+    """
+    只估计“这次扫描能新增多少体素”，但不写回 coverage.visited。
+    用于评估候选视点时的 score。
+    """
+    if coverage is None:
+        return 0
+    if scan_pcd is None or scan_pcd.is_empty():
+        return 0
+
+    pts = np.asarray(scan_pcd.points)
+    if pts.shape[0] == 0:
+        return 0
+
+    valid, idx = coverage.world_to_grid_index(pts)
+    idx = idx[valid]
+    if idx.shape[0] == 0:
+        return 0
+
+    flat_idx = (
+        idx[:, 0] * (coverage.grid_size[1] * coverage.grid_size[2]) +
+        idx[:, 1] * coverage.grid_size[2] +
+        idx[:, 2]
+    )
+    unique_flat = np.unique(flat_idx)
+
+    z = unique_flat % coverage.grid_size[2]
+    y = (unique_flat // coverage.grid_size[2]) % coverage.grid_size[1]
+    x = unique_flat // (coverage.grid_size[1] * coverage.grid_size[2])
+
+    before = coverage.visited[x, y, z]
+    new_voxels = np.count_nonzero(before == 0)
+    return int(new_voxels)
+
+
+def fibonacci_sphere_samples(num_samples: int) -> np.ndarray:
+    """
+    在单位球面上生成接近均匀分布的点（Fibonacci 采样）。
+    返回 (N,3) 数组。
+    """
+    if num_samples <= 0:
+        return np.zeros((0, 3), dtype=float)
+
+    points = []
+    offset = 2.0 / num_samples
+    increment = np.pi * (3.0 - np.sqrt(5.0))  # 黄金角
+
+    for i in range(num_samples):
+        y = ((i * offset) - 1.0) + (offset / 2.0)
+        r = np.sqrt(max(0.0, 1.0 - y * y))
+        phi = i * increment
+        x = np.cos(phi) * r
+        z = np.sin(phi) * r
+        points.append([x, y, z])
+
+    return np.array(points, dtype=float)
 
 
 def sample_candidate_views(center: np.ndarray,
                            radius: float,
-                           num_views: int):
+                           num_candidates: int):
     """
-    在包围球表面均匀采样 candidate 视点：
-    - 位置 pos = center + dir * radius
-    - 朝向 front = center - pos（看向模型中心）
-    返回 list[(pos, front)]
+    在以 center 为球心、radius 为半径的球面上采样视点。
+    视线方向指向 center。
+    返回 list of (pos, dir)。
     """
-    center = np.asarray(center, dtype=float).reshape(3)
-    radius = float(radius)
-    num_views = int(num_views)
+    center = np.asarray(center, dtype=float)
+    if radius <= 0:
+        radius = 1.0
 
-    if num_views <= 0:
-        return []
-
+    dirs = fibonacci_sphere_samples(num_candidates)
     views = []
-    # Fibonacci sphere 采样
-    phi = (1 + 5 ** 0.5) / 2  # 黄金比例
-    for k in range(num_views):
-        t = (k + 0.5) / num_views
-        y = 1 - 2 * t
-        r = np.sqrt(max(0.0, 1 - y * y))
-        theta = 2 * np.pi * k / phi
-        x = r * np.cos(theta)
-        z = r * np.sin(theta)
-        dir_vec = np.array([x, y, z], dtype=float)  # 指向外方向
-        pos = center + dir_vec * radius
+    for d in dirs:
+        pos = center + radius * d  # 球面上的点
         front = center - pos
-        front /= (np.linalg.norm(front) + 1e-12)
+        n = np.linalg.norm(front) + 1e-12
+        front = front / n
         views.append((pos, front))
 
     return views
 
 
-def _clone_camera_with_pose(cam: CameraModel,
-                            pos: np.ndarray,
-                            direction: np.ndarray) -> CameraModel:
+def evaluate_view(mesh: o3d.geometry.TriangleMesh,
+                  coverage: CoverageGrid,
+                  cam_template: CameraModel,
+                  pos: np.ndarray,
+                  direction: np.ndarray,
+                  num_points: int = 200000):
     """
-    根据模板 CameraModel + 新位置/朝向，构造一个临时 CameraModel。
-    不修改原 cam。
+    对单个候选视点做评估：
+      1. 用 template 相机 + 给定 pos/dir 构造一个临时 CameraModel
+      2. 用 simulate_scan_raycast 做一次“虚拟扫描”
+      3. 用 estimate_coverage_gain_without_commit 估计 coverage 增量
+    返回：(gain, virtual_scan_pcd)
     """
-    new_cam = CameraModel()
+    cam = CameraModel()
     # 复制内参
-    new_cam.fov_deg = cam.fov_deg
-    new_cam.near = cam.near
-    new_cam.far = cam.far
-    new_cam.best_distance = cam.best_distance
-    new_cam.image_width = cam.image_width
-    new_cam.image_height = cam.image_height
+    cam.fov_deg = cam_template.fov_deg
+    cam.near = cam_template.near
+    cam.far = cam_template.far
+    cam.best_distance = cam_template.best_distance
+    cam.image_width = cam_template.image_width
+    cam.image_height = cam_template.image_height
+    cam.up = cam_template.up.copy()
 
-    # 外参
-    new_cam.position = np.asarray(pos, dtype=float).reshape(3)
-    new_cam.direction = np.asarray(direction, dtype=float).reshape(3)
-    new_cam.up = cam.up.copy()
-    return new_cam
+    cam.position = np.asarray(pos, dtype=float)
+    cam.direction = np.asarray(direction, dtype=float)
 
-
-def _compute_distance_penalty(cam: CameraModel,
-                              scan_pcd: o3d.geometry.PointCloud) -> float:
-    """
-    距离惩罚：偏离最佳采样距离 best_distance 的程度。
-    这里用“扫描点云中点到相机的平均距离”来估计。
-
-    dist_penalty = |mean_dist - best_dist| / best_dist （0 越好）
-    """
-    if scan_pcd is None or scan_pcd.is_empty():
-        return 1.0  # 没扫到点，惩罚最大
-
-    pts = np.asarray(scan_pcd.points)
-    pos = cam.position.reshape(1, 3)
-    dist = np.linalg.norm(pts - pos, axis=1)
-    if dist.size == 0:
-        return 1.0
-
-    mean_d = float(dist.mean())
-    best_d = float(cam.best_distance)
-    if best_d <= 1e-9:
-        return 0.0
-
-    return abs(mean_d - best_d) / best_d
-
-
-def _compute_angle_penalty(cam: CameraModel,
-                           scan_pcd: o3d.geometry.PointCloud) -> float:
-    """
-    角度惩罚（成像质量）：
-    极简版：用“点相对于光轴的离轴角”做指标，而不是表面法向入射角。
-    - 假设视轴 front 上成像最好，越接近 FOV 边缘质量越差。
-    - 计算所有扫描点的 angle / (FOV/2) 的平均值，得到 0~1 范围的惩罚。
-
-    angle_penalty = mean( theta_i / (FOV/2) ), clipped 到 [0,1]，越小越好
-    """
-    if scan_pcd is None or scan_pcd.is_empty():
-        return 1.0
-
-    pts = np.asarray(scan_pcd.points)
-    pos = cam.position.reshape(1, 3)
-    front, _, _ = cam.get_normalized_axes()
-
-    vec = pts - pos  # [N,3]
-    dist = np.linalg.norm(vec, axis=1) + 1e-12
-    dir_to_pts = vec / dist.reshape(-1, 1)
-
-    cos_theta = np.clip(dir_to_pts @ front, -1.0, 1.0)
-    theta = np.arccos(cos_theta)  # [N] 弧度
-
-    fov_rad = np.deg2rad(cam.fov_deg)
-    half = max(fov_rad / 2.0, 1e-6)
-    norm_angle = theta / half  # 0 ~ 1（理论上）
-    norm_angle = np.clip(norm_angle, 0.0, 1.0)
-
-    return float(norm_angle.mean())
-
-
-def evaluate_candidate_view(
-    geom,
-    coverage: CoverageGrid,
-    cam_template: CameraModel,
-    pos: np.ndarray,
-    direction: np.ndarray,
-    weights=None,
-):
-    """
-    对一个候选视点做“虚拟扫描 + 打分”：
-      1. clone camera model + 设置 pose
-      2. 利用 raycast/simple 扫描得到 scan_pcd
-      3. coverage.compute_gain(scan_pcd) 算 new_coverage
-      4. 计算距离惩罚 / 角度惩罚
-      5. 按加权公式算 score
-
-    返回：
-      (score, scan_pcd, new_coverage, dist_penalty, angle_penalty)
-    若扫描结果为空，返回 score=None。
-    """
-    if weights is None:
-        # 可以在外面传入更合适的权重
-        weights = dict(w_cov=1.0, w_dist=0.2, w_angle=0.2)
-
-    cam = _clone_camera_with_pose(cam_template, pos, direction)
-
-    # 扫描：mesh 用 raycast，pcd 用简单裁剪
-    if isinstance(geom, o3d.geometry.TriangleMesh):
-        scan_pcd = simulate_scan_raycast(cam, geom)
-    elif isinstance(geom, o3d.geometry.PointCloud):
-        scan_pcd = simulate_scan_simple(cam, geom)
-    else:
-        print("NBV evaluate 不支持的几何类型:", type(geom))
-        return None, None, 0, 1.0, 1.0
-
-    if scan_pcd is None or scan_pcd.is_empty():
-        return None, scan_pcd, 0, 1.0, 1.0
-
-    # 覆盖增量
-    new_cov = coverage.compute_gain(scan_pcd)
-    if new_cov <= 0:
-        # 没有带来新的覆盖，直接打低分
-        dist_pen = _compute_distance_penalty(cam, scan_pcd)
-        ang_pen = _compute_angle_penalty(cam, scan_pcd)
-        score = -weights["w_dist"] * dist_pen - weights["w_angle"] * ang_pen
-        return score, scan_pcd, new_cov, dist_pen, ang_pen
-
-    # 归一化覆盖率（0~1）
-    total = max(coverage.total_voxels, 1)
-    cov_reward = new_cov / total
-
-    dist_pen = _compute_distance_penalty(cam, scan_pcd)  # 0 越好
-    ang_pen = _compute_angle_penalty(cam, scan_pcd)      # 0 越好
-
-    # 极简评分模型：
-    #   score = w_cov * cov_reward
-    #           - w_dist * dist_pen
-    #           - w_angle * ang_pen
-    score = (
-        weights["w_cov"] * cov_reward
-        - weights["w_dist"] * dist_pen
-        - weights["w_angle"] * ang_pen
+    # 用 raycasting 模拟扫描
+    scan_pcd = simulate_scan_raycast(
+        cam,
+        mesh,
+        num_points=num_points,
+        scan_color=(1.0, 0.0, 0.0)  # 颜色随意，这里只是虚拟评估
     )
 
-    return float(score), scan_pcd, int(new_cov), float(dist_pen), float(ang_pen)
+    gain = estimate_coverage_gain_without_commit(coverage, scan_pcd)
+    return gain, scan_pcd
 
 
 def compute_next_best_view(
-    geom,
+    mesh: o3d.geometry.TriangleMesh,
     coverage: CoverageGrid,
     cam_template: CameraModel,
     center: np.ndarray,
-    search_radius: float,
-    num_candidates: int = 30,
-    weights=None,
+    radius: float,
+    num_candidates: int = 50,
+    num_points: int = 200000,
 ):
     """
-    NBV 主流程（单轮）：
-      1. 在包围球上采样 num_candidates 个视点
-      2. 对每个视点调用 evaluate_candidate_view
-      3. 选出 score 最大的视点，返回相关信息
+    只考虑覆盖率的 NBV：
+      - 在球面上采样若干候选视点
+      - 对每个视点做虚拟扫描，估计 coverage 增量
+      - 选出 gain 最大的视点，返回其信息
 
     返回：
-      dict:
-        {
-          "best_pos": ...,
-          "best_dir": ...,
-          "best_score": float,
-          "best_scan_pcd": o3d.geometry.PointCloud,
-          "coverage_gain": int,
-          "dist_penalty": float,
-          "angle_penalty": float,
-        }
-      若没有合适视点，返回 None
+      None 或 dict:
+      {
+        "position": (3,),
+        "direction": (3,),
+        "gain": int,
+        "scan_pcd": o3d.geometry.PointCloud,
+      }
     """
-    candidates = sample_candidate_views(center, search_radius, num_candidates)
-    if not candidates:
+    if mesh is None or mesh.is_empty():
+        print("[NBV] mesh is empty, cannot compute NBV.")
         return None
 
-    best = None
-    best_score = -1e9
+    center = np.asarray(center, dtype=float)
+    if not np.isfinite(center).all():
+        print("[NBV] invalid center, cannot compute NBV.")
+        return None
 
-    for pos, front in candidates:
-        score, scan_pcd, gain, dist_pen, ang_pen = evaluate_candidate_view(
-            geom,
-            coverage,
-            cam_template,
-            pos,
-            front,
-            weights=weights,
+    views = sample_candidate_views(center, radius, num_candidates)
+    if not views:
+        print("[NBV] no candidate views.")
+        return None
+
+    best_gain = -1
+    best_info = None
+
+    for pos, front in views:
+        gain, scan_pcd = evaluate_view(
+            mesh, coverage, cam_template,
+            pos, front,
+            num_points=num_points
         )
-        if score is None or scan_pcd is None or scan_pcd.is_empty():
-            continue
-        if gain <= 0:
-            # 没有新增覆盖就不考虑
-            continue
+        if gain > best_gain:
+            best_gain = gain
+            best_info = {
+                "position": pos,
+                "direction": front,
+                "gain": gain,
+                "scan_pcd": scan_pcd,
+            }
 
-        if score > best_score:
-            best_score = score
-            best = dict(
-                best_pos=np.asarray(pos, dtype=float),
-                best_dir=np.asarray(front, dtype=float),
-                best_score=float(score),
-                best_scan_pcd=scan_pcd,
-                coverage_gain=int(gain),
-                dist_penalty=float(dist_pen),
-                angle_penalty=float(ang_pen),
-            )
+    if best_info is None or best_gain <= 0:
+        print("[NBV] no candidate gives positive coverage gain.")
+        return None
 
-    return best
+    return best_info

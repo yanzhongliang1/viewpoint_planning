@@ -302,6 +302,37 @@ class MainWindowSlots(QObject):
             filename += ".ply"
         win.camera_controller.export_all_scans(filename)
 
+    # =========================
+    # NBV 相关
+    # =========================
+    def on_nbv_params_changed(self, *args):
+        """
+        当 NBV 体素大小 / 候选视点数改变时更新控制器参数。
+        为简单起见，改变体素大小后重置 coverage，下次会重新初始化。
+        """
+        win = self.win
+        voxel = win.spin_nbv_voxel.value()
+        num_cand = win.spin_nbv_candidates.value()
+
+        win.nbv_controller.voxel_size = float(voxel)
+        win.nbv_controller.num_candidates = int(num_cand)
+
+        # 体素大小变化意味着覆盖网格要重建
+        win.nbv_controller.coverage = None
+
+        print(f"[NBV] params changed: voxel_size={voxel}, "
+              f"num_candidates={num_cand}, coverage reset.")
+
+    def on_nbv_next_clicked(self):
+        """
+        运行一次 NBV：计算下一最佳视点，并把结果加入视点列表。
+        """
+        win = self.win
+        win.nbv_controller.run_one_step()
+        # NBV 会往 view_records 里加一个新的 ViewRecord，
+        # 所以这里刷新一下视点管理表格。
+        self.refresh_view_table()
+
     # ----------- 关闭事件 -----------
 
     def closeEvent(self, event):

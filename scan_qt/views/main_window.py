@@ -15,7 +15,7 @@ from scan_qt.models.camera_model import CameraModel
 from scan_qt.controllers.camera_controller import CameraController
 
 from scan_qt.views.main_window_slots import MainWindowSlots
-
+from scan_qt.controllers.nbv_controller import NBVController
 
 class MainWindow(QMainWindow):
     """
@@ -93,6 +93,9 @@ class MainWindow(QMainWindow):
 
         self.camera_model = CameraModel()
         self.camera_controller = CameraController(self.model, self.view3d, self.camera_model)
+
+        # NEW: NBV 控制器
+        self.nbv_controller = NBVController(self.model, self.camera_model, self.view3d)
 
         # 槽函数管理类
         self.slots = MainWindowSlots(self)
@@ -398,6 +401,40 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(pcd_group)
         right_layout.addWidget(voxel_group)
         right_layout.addWidget(normal_group)
+
+        # =========================================================
+        # 右列中：NBV 参数 / 控制
+        # =========================================================
+        nbv_group = QGroupBox("NBV / 下一最佳视点")
+        nbv_layout = QHBoxLayout(nbv_group)
+
+        # 体素大小
+        nbv_layout.addWidget(QLabel("覆盖体素大小:"))
+        self.spin_nbv_voxel = QDoubleSpinBox()
+        self.spin_nbv_voxel.setDecimals(5)
+        self.spin_nbv_voxel.setRange(1e-5, 1.0)
+        self.spin_nbv_voxel.setSingleStep(0.001)
+        self.spin_nbv_voxel.setValue(self.nbv_controller.voxel_size)
+        self.spin_nbv_voxel.setMaximumWidth(100)
+        self.spin_nbv_voxel.valueChanged.connect(self.slots.on_nbv_params_changed)
+        nbv_layout.addWidget(self.spin_nbv_voxel)
+
+        # 候选视点数量
+        nbv_layout.addWidget(QLabel("候选视点数:"))
+        self.spin_nbv_candidates = QSpinBox()
+        self.spin_nbv_candidates.setRange(1, 1000)
+        self.spin_nbv_candidates.setSingleStep(1)
+        self.spin_nbv_candidates.setValue(self.nbv_controller.num_candidates)
+        self.spin_nbv_candidates.setMaximumWidth(80)
+        self.spin_nbv_candidates.valueChanged.connect(self.slots.on_nbv_params_changed)
+        nbv_layout.addWidget(self.spin_nbv_candidates)
+
+        # 下一最佳视点按钮
+        self.btn_nbv_next = QPushButton("计算下一最佳视点")
+        self.btn_nbv_next.clicked.connect(self.slots.on_nbv_next_clicked)
+        nbv_layout.addWidget(self.btn_nbv_next)
+
+        right_layout.addWidget(nbv_group)
 
         # =========================================================
         # 右列下：视点 / 扫描帧管理表格

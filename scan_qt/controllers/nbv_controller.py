@@ -7,182 +7,190 @@ from scan_qt.models.camera_model import CameraModel
 from scan_qt.views.model_view import ModelView
 
 from scan_qt.core import nbv_core
-from scan_qt.controllers.camera_controller import ViewRecord
 from scan_qt.core.camera_core import build_frustum_lines
+from scan_qt.controllers.camera_controller import ViewRecord
 
 
 class NBVController:
     """
-    管理 NBV 流程的 Controller：
-    - 持有 CoverageGrid
+    负责 NBV 流程：
+    - 管理 CoverageGrid（覆盖度）
     - 调 nbv_core 计算下一最佳视点
-    - 创建 ViewRecord，更新 scene_model + camera_model + view
+    - 把结果写入 ModelModel.view_records，并更新 CameraModel
     """
 
     def __init__(self,
                  scene_model: ModelModel,
-                 view: ModelView,
-                 camera_model: CameraModel):
+                 camera_model: CameraModel,
+                 view: ModelView):
         self.scene_model = scene_model
-        self.view = view
         self.camera_model = camera_model
+        self.view = view
 
         self.coverage: nbv_core.CoverageGrid | None = None
 
-        # 一些 NBV 参数（先用简单默认值，后面可以接到 UI）
-        self.voxel_size = 0.02         # 覆盖网格分辨率
-        self.num_candidates = 30       # 每轮评估视点数
-        self.weights = dict(
-            w_cov=1.0,
-            w_dist=0.2,
-            w_angle=0.2,
-        )
+        # 一些 NBV 参数（可以在 UI 里改）
+        self.voxel_size = 0.02      # 覆盖网格的体素大小
+        self.num_candidates = 50    # 每轮评估的候选视点数量
+        self.num_points_per_scan = 200000  # 虚拟扫描采样点数
 
-        # 颜色循环（简单复制 camera_controller 的策略）
-        self.color_palette = [
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (1.0, 1.0, 0.0),
-            (1.0, 0.0, 1.0),
-            (0.0, 1.0, 1.0),
-        ]
-        self.color_index = 0
+    # --------- 内部辅助 ---------
 
-    # ---------------- 覆盖网格相关 ----------------
-
-    def initialize_coverage(self):
+    def _ensure_coverage_initialized(self):
         """
-        用当前 base_geom 构造覆盖网格。
+        确保 coverage 已经建立，如果还没有则根据 base_geom 初始化。
         """
-        base = self.scene_model.base_geom
-        if base is None:
-            print("NBV: 没有 base_geom，无法初始化覆盖网格")
+        if self.coverage is not None:
             return
 
-        self.coverage = nbv_core.build_initial_coverage_grid(
-            base, voxel_size=self.voxel_size
+        base = self.scene_model.base_geom
+        if base is None:
+            print("[NBV] no base geometry, cannot build coverage grid.")
+            return
+
+        # 如果是点云，也可以直接用；如果是 mesh 更好
+        if isinstance(base, o3d.geometry.PointCloud):
+            geom_for_bbox = base
+        elif isinstance(base, o3d.geometry.TriangleMesh):
+            geom_for_bbox = base
+        else:
+            print("[NBV] unsupported geom type for coverage init:", type(base))
+            return
+
+        self.coverage = nbv_core.build_coverage_grid_from_geom(
+            geom_for_bbox, self.voxel_size
         )
-        print("NBV: 初始化 CoverageGrid，size =",
-              self.coverage.grid_size, "总体素 =", self.coverage.total_voxels)
+        print("[NBV] coverage grid initialized with size:",
+              self.coverage.grid_size)
 
-    def rebuild_coverage_from_existing_views(self):
-        """
-        如果你已经手工扫了一些视点，可以用这个函数把已有的 scan_pcd 融入 coverage。
-        """
+        # 初始时，把已有视点的扫描结果也纳入覆盖
+        self._update_coverage_with_existing_views()
+
+    def _update_coverage_with_existing_views(self):
         if self.coverage is None:
-            self.initialize_coverage()
-            if self.coverage is None:
-                return
-
+            return
+        total_new = 0
         for rec in self.scene_model.view_records:
-            if rec.scan_pcd is not None and not rec.scan_pcd.is_empty():
-                gain = self.coverage.update_with_scan(rec.scan_pcd)
-                print(f"NBV: 从已有视点 {rec.name} 融入 coverage，新增 {gain} 体素")
+            if rec.scan_pcd is not None:
+                inc = nbv_core.update_coverage_from_scan(self.coverage,
+                                                         rec.scan_pcd)
+                total_new += inc
+        if total_new > 0:
+            print(f"[NBV] coverage updated from existing views, "
+                  f"new voxels: {total_new}")
 
-        print("NBV: 目前覆盖:", self.coverage.covered_voxels,
-              "/", self.coverage.total_voxels)
-
-    # ---------------- 主流程：跑一步 NBV ----------------
-
-    def run_one_step(self):
+    def _create_camera_axes(self):
         """
-        执行一次 NBV 迭代：
-          - 从 coverage + 当前几何计算下一最佳视点
-          - 把这一帧加入 view_records
-          - 更新 CameraModel + 渲染
+        和 CameraController 里一样，在当前 camera_model 位姿上创建小坐标系。
+        为了避免循环依赖，这里拷贝一份逻辑。
         """
-        base = self.scene_model.base_geom
-        if base is None:
-            print("NBV: 没有几何，无法执行")
-            return
-
-        if self.coverage is None:
-            self.initialize_coverage()
-            if self.coverage is None:
-                return
-            # 可选：如果你之前有手动扫过，可以先同步：
-            self.rebuild_coverage_from_existing_views()
-
-        center = self.scene_model.center
-        # 搜索半径：这里先简单用 camera_model.best_distance
-        search_radius = float(self.camera_model.best_distance)
-
-        best = nbv_core.compute_next_best_view(
-            base,
-            self.coverage,
-            self.camera_model,
-            center=center,
-            search_radius=search_radius,
-            num_candidates=self.num_candidates,
-            weights=self.weights,
-        )
-
-        if best is None:
-            print("NBV: 没有找到有效的下一视点（可能已经覆盖完或候选视点无增益）")
-            return
-
-        best_pos = best["best_pos"]
-        best_dir = best["best_dir"]
-        best_score = best["best_score"]
-        best_scan = best["best_scan_pcd"]
-        gain = best["coverage_gain"]
-        dist_pen = best["dist_penalty"]
-        ang_pen = best["angle_penalty"]
-
-        # 真正把扫描结果写入 coverage
-        real_gain = self.coverage.update_with_scan(best_scan)
-        print(
-            f"NBV: 选中视点，score={best_score:.4f}, "
-            f"覆盖增量(预测/实际)={gain}/{real_gain}, "
-            f"dist_pen={dist_pen:.3f}, angle_pen={ang_pen:.3f}"
-        )
-        print(
-            f"NBV: 当前覆盖 {self.coverage.covered_voxels} / {self.coverage.total_voxels}"
-        )
-
-        # 更新 CameraModel pose
-        self.camera_model.position = best_pos.copy()
-        self.camera_model.direction = best_dir.copy()
-        # up 保持不变即可
-
-        # 构建视锥和坐标系
-        frustum = build_frustum_lines(self.camera_model)
-
-        # 复制 CameraController 里的 _create_camera_axes 的逻辑（简化版）
         front, up, right = self.camera_model.get_normalized_axes()
         pos = self.camera_model.position
-        # 按场景尺度/最佳距离生成一个合适的坐标系大小
+
         scene_scale = float(self.scene_model.radius) if hasattr(self.scene_model, "radius") else 1.0
         size = max(0.05 * scene_scale, 0.1 * self.camera_model.best_distance, 1e-3)
-        axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=size)
+
+        frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=size)
+
         R = np.column_stack((right, up, front))
         T = np.eye(4)
         T[:3, :3] = R
         T[:3, 3] = pos
-        axes.transform(T)
+        frame.transform(T)
 
-        # 颜色策略（循环）
-        color = self.color_palette[self.color_index % len(self.color_palette)]
-        self.color_index += 1
+        return frame
 
+    # --------- 对外 API：跑一轮 NBV ---------
+
+    def run_one_step(self):
+        """
+        进行一次“只考虑覆盖率”的 NBV 迭代：
+          - 如果 coverage 还没初始化，则初始化
+          - 调用 nbv_core.compute_next_best_view 找下一视点
+          - 写回 CameraModel 和 ModelModel.view_records
+        """
+        self._ensure_coverage_initialized()
+        if self.coverage is None:
+            return
+
+        base = self.scene_model.base_geom
+        if base is None:
+            print("[NBV] no base geometry, cannot run NBV.")
+            return
+
+        # 目前只考虑 mesh 场景，若是点云你可以根据需要先重建 mesh 或直接用点云版扫描
+        if not isinstance(base, o3d.geometry.TriangleMesh):
+            print("[NBV] base_geom is not TriangleMesh, NBV now assumes mesh.")
+            return
+
+        center = self.scene_model.center
+        radius = float(self.camera_model.best_distance)
+        if radius <= 0:
+            radius = float(self.scene_model.radius)
+
+        result = nbv_core.compute_next_best_view(
+            mesh=base,
+            coverage=self.coverage,
+            cam_template=self.camera_model,
+            center=center,
+            radius=radius,
+            num_candidates=self.num_candidates,
+            num_points=self.num_points_per_scan,
+        )
+
+        if result is None:
+            print("[NBV] no NBV found (no positive coverage gain).")
+            return
+
+        pos = np.asarray(result["position"], dtype=float)
+        direction = np.asarray(result["direction"], dtype=float)
+        gain = int(result["gain"])
+        scan_pcd = result["scan_pcd"]
+
+        print(f"[NBV] selected NBV with gain={gain}, "
+              f"pos={pos}, dir={direction}")
+
+        # 把这次扫描真正写回 coverage（只在非空扫描时）
+        if scan_pcd is not None and not scan_pcd.is_empty():
+            nbv_core.update_coverage_from_scan(self.coverage, scan_pcd)
+        else:
+            print("[NBV] warning: best NBV scan_pcd is empty, "
+                  "coverage not updated.")
+
+        # 更新 CameraModel
+        self.camera_model.position = pos
+        self.camera_model.direction = direction
+
+        # 生成视锥和小坐标系
+        frustum = build_frustum_lines(self.camera_model)
+        axes = self._create_camera_axes()
+
+        # 视点命名
         view_name = f"NBV_{len(self.scene_model.view_records) + 1}"
+
+        # 用 ViewRecord 记录下来
+        # 注意：颜色可以采用某个策略，比如统一用黄色，或者继承 CameraController 的 palette。
+        color = np.array([1.0, 1.0, 0.0], dtype=float)  # 黄色，用来区分 NBV
 
         rec = ViewRecord(
             name=view_name,
-            color=np.array(color, dtype=float),
+            color=color,
             visible=True,
             frustum=frustum,
             axes=axes,
-            scan_pcd=best_scan,
-            position=best_pos.copy(),
-            direction=best_dir.copy(),
+            scan_pcd=scan_pcd,
+            position=pos.copy(),
+            direction=direction.copy(),
         )
         self.scene_model.view_records.append(rec)
 
-        # 打开显示
-        self.scene_model.show_camera = True
+        # 确保显示扫描结果
         self.scene_model.show_scans = True
+        self.scene_model.show_camera = True
 
-        # 刷新 Open3D 场景
+        # 重绘
         self.view.render_scene(self.scene_model, recenter=False)
+
+        # 打印当前总体覆盖率
+        ratio = self.coverage.coverage_ratio() if self.coverage else 0.0
+        print(f"[NBV] current coverage ratio = {ratio:.4f}")
