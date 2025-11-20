@@ -54,6 +54,10 @@ class MainWindowSlots(QObject):
     def on_bbox_toggled(self, state):
         self.win.controller.toggle_bbox(bool(state))
 
+    def on_model_axes_toggled(self, state):
+        self.win.model.show_model_axes = bool(state)
+        self.win.view3d.render_scene(self.win.model, recenter=False)
+
     def on_point_size_changed(self, value):
         self.win.controller.set_point_size(float(value))
 

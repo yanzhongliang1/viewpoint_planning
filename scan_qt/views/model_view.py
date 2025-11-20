@@ -117,6 +117,30 @@ class ModelView:
 
         self._safe_render()
 
+    def _build_model_axes(self, model: ModelModel):
+        """
+        在模型的 AABB 中心放一个坐标系，用于表示“模型/世界”坐标系。
+        坐标系长度根据模型尺度自适应。
+        """
+        if model.current_geom is None:
+            model.model_axes = None
+            return
+
+        bbox = model.current_geom.get_axis_aligned_bounding_box()
+        center = bbox.get_center()
+        extent = bbox.get_extent()
+        radius = float(np.linalg.norm(extent)) + 1e-6
+
+        size = 0.15 * radius  # 你可以微调这个比例
+        if size <= 1e-6:
+            size = 1.0
+
+        frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=size)
+        # 平移到模型中心
+        # frame.translate(center)
+
+        model.model_axes = frame
+
     # ----------- 场景刷新 -----------
 
     def render_scene(self, model: ModelModel, recenter=False):
@@ -143,9 +167,19 @@ class ModelView:
         # 主几何
         self.vis.add_geometry(model.current_geom)
 
+        # ===== NEW: 模型坐标系 =====
+        # 如果还没建过，或者这次要求 recenter（通常意味着加载了新模型），就重建一次
+        if model.model_axes is None or recenter:
+            self._build_model_axes(model)
+        if getattr(model, "show_model_axes", False) and model.model_axes is not None:
+            self.vis.add_geometry(model.model_axes)
+
         # 辅助几何
         if model.show_bbox and model.bbox_geom is not None:
             self.vis.add_geometry(model.bbox_geom)
+            print("min:", model.bbox_geom.min_bound)
+            print("max:", model.bbox_geom.max_bound)
+            print("extent:", model.bbox_geom.get_extent())
 
         if model.show_voxel and model.voxel_grid is not None:
             self.vis.add_geometry(model.voxel_grid)

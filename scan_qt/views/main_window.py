@@ -143,6 +143,11 @@ class MainWindow(QMainWindow):
         self.cb_show_bbox.stateChanged.connect(self.slots.on_bbox_toggled)
         display_layout.addWidget(self.cb_show_bbox)
 
+        self.cb_show_model_axes = QCheckBox("显示模型坐标系")
+        self.cb_show_model_axes.setChecked(True)
+        self.cb_show_model_axes.stateChanged.connect(self.slots.on_model_axes_toggled)
+        display_layout.addWidget(self.cb_show_model_axes)
+
         display_layout.addWidget(QLabel("点大小:"))
         self.spin_point_size = QDoubleSpinBox()
         self.spin_point_size.setRange(1.0, 20.0)

@@ -10,6 +10,8 @@ class ModelModel:
     def __init__(self):
         # 几何对象
         self.base_geom = None          # 原始网格/点云
+        self.model_axes = None
+        self.show_model_axes = True
         self.current_geom = None       # 当前显示几何
         self.sampled_pcd = None        # 网格采样点云
         self.downsampled_pcd = None    # 降采样点云
