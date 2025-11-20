@@ -83,7 +83,6 @@ class ModelView:
 
         self._safe_render()
 
-
     def set_view_direction(self, model: ModelModel, view_name: str):
         if self.vis is None or model.current_geom is None:
             return
@@ -92,17 +91,23 @@ class ModelView:
         ctr.set_lookat(model.center)
 
         if view_name == "front":
-            front = [0, 0, -1]; up = [0, -1, 0]
+            front = [0, 0, -1];
+            up = [0, -1, 0]
         elif view_name == "back":
-            front = [0, 0, 1];  up = [0, -1, 0]
+            front = [0, 0, 1];
+            up = [0, -1, 0]
         elif view_name == "left":
-            front = [-1, 0, 0]; up = [0, -1, 0]
+            front = [-1, 0, 0];
+            up = [0, -1, 0]
         elif view_name == "right":
-            front = [1, 0, 0];  up = [0, -1, 0]
+            front = [1, 0, 0];
+            up = [0, -1, 0]
         elif view_name == "top":
-            front = [0, -1, 0]; up = [0, 0, -1]
+            front = [0, -1, 0];
+            up = [0, 0, -1]
         elif view_name == "bottom":
-            front = [0, 1, 0];  up = [0, 0, 1]
+            front = [0, 1, 0];
+            up = [0, 0, 1]
         else:
             return
 

@@ -305,6 +305,27 @@ class MainWindowSlots(QObject):
     # =========================
     # NBV 相关
     # =========================
+    def on_nbv_mode_changed(self, index):
+        """
+        NBV 模式切换：
+          - "中心球壳" -> mode="sphere"
+          - "表面法向外扩" -> mode="surface"
+        切换模式时重置 coverage，让下一次 NBV 重新初始化覆盖网格。
+        """
+        win = self.win
+        text = win.combo_nbv_mode.currentText()
+        if text == "中心球壳":
+            win.nbv_controller.mode = "sphere"
+        elif text == "表面法向外扩":
+            win.nbv_controller.mode = "surface"
+        else:
+            win.nbv_controller.mode = "sphere"
+
+        # 切模式时清空 coverage，让下一次自动重建
+        win.nbv_controller.coverage = None
+        print(f"[NBV] mode changed to {win.nbv_controller.mode}, "
+              "coverage reset.")
+
     def on_nbv_params_changed(self, *args):
         """
         当 NBV 体素大小 / 候选视点数改变时更新控制器参数。
@@ -332,6 +353,15 @@ class MainWindowSlots(QObject):
         # NBV 会往 view_records 里加一个新的 ViewRecord，
         # 所以这里刷新一下视点管理表格。
         self.refresh_view_table()
+
+    def on_nbv_curvature_weight_changed(self, value):
+        """
+        更新 NBV 的曲率权重。
+        只影响 score 计算，不需要重建 coverage。
+        """
+        win = self.win
+        win.nbv_controller.curvature_weight = float(value)
+        print(f"[NBV] curvature_weight set to {value:.3f}")
 
     # ----------- 关闭事件 -----------
 

@@ -34,6 +34,14 @@ class NBVController:
         self.num_candidates = 50    # 每轮评估的候选视点数量
         self.num_points_per_scan = 200000  # 虚拟扫描采样点数
 
+        # NBV 模式： "sphere" 或 "surface"
+        self.mode = "sphere"
+
+        # surface 模式下的曲率相关参数
+        self.curvature_knn = 20
+        self.curvature_power = 1.0     # 曲率分布权重（抽样时用）
+        self.curvature_weight = 1.0    # 曲率对最终 score 的影响权重
+
     # --------- 内部辅助 ---------
 
     def _ensure_coverage_initialized(self):
@@ -128,15 +136,32 @@ class NBVController:
         if radius <= 0:
             radius = float(self.scene_model.radius)
 
-        result = nbv_core.compute_next_best_view(
-            mesh=base,
-            coverage=self.coverage,
-            cam_template=self.camera_model,
-            center=center,
-            radius=radius,
-            num_candidates=self.num_candidates,
-            num_points=self.num_points_per_scan,
-        )
+        # 根据模式选择不同的 NBV 算法
+        if self.mode == "sphere":
+            result = nbv_core.compute_next_best_view(
+                mesh=base,
+                coverage=self.coverage,
+                cam_template=self.camera_model,
+                center=center,
+                radius=radius,
+                num_candidates=self.num_candidates,
+                num_points=self.num_points_per_scan,
+            )
+        elif self.mode == "surface":
+            result = nbv_core.compute_next_best_view_surface(
+                mesh=base,
+                coverage=self.coverage,
+                cam_template=self.camera_model,
+                best_distance=self.camera_model.best_distance,
+                num_surface_samples=self.num_candidates,
+                num_points=self.num_points_per_scan,
+                curvature_knn=self.curvature_knn,
+                curvature_power=self.curvature_power,
+                curvature_weight=self.curvature_weight,
+            )
+        else:
+            print(f"[NBV] unknown mode: {self.mode}")
+            return
 
         if result is None:
             print("[NBV] no NBV found (no positive coverage gain).")
@@ -147,15 +172,29 @@ class NBVController:
         gain = int(result["gain"])
         scan_pcd = result["scan_pcd"]
 
-        print(f"[NBV] selected NBV with gain={gain}, "
-              f"pos={pos}, dir={direction}")
+        print(f"[NBV] mode={self.mode}, selected NBV with "
+              f"gain={gain}, pos={pos}, dir={direction}")
+        if "curvature" in result:
+            print(f"[NBV] anchor curvature={result['curvature']:.4f}, "
+                  f"score={result.get('score', gain):.2f}")
 
         # 把这次扫描真正写回 coverage（只在非空扫描时）
         if scan_pcd is not None and not scan_pcd.is_empty():
             nbv_core.update_coverage_from_scan(self.coverage, scan_pcd)
+            # NEW: 为这次 NBV 扫描生成一个随机颜色
+            rand_color = np.random.rand(3)
+            # 稍微避免太暗，抬一抬下限
+            rand_color = 0.5 + 0.8 * rand_color
+
+            pts_np = np.asarray(scan_pcd.points)
+            if pts_np.shape[0] > 0:
+                clr = np.tile(rand_color.reshape(1, 3), (pts_np.shape[0], 1))
+                scan_pcd.colors = o3d.utility.Vector3dVector(clr)
         else:
             print("[NBV] warning: best NBV scan_pcd is empty, "
                   "coverage not updated.")
+            # 空的话就用一个默认颜色
+            rand_color = np.array([1.0, 1.0, 0.0], dtype=float)
 
         # 更新 CameraModel
         self.camera_model.position = pos
@@ -170,7 +209,7 @@ class NBVController:
 
         # 用 ViewRecord 记录下来
         # 注意：颜色可以采用某个策略，比如统一用黄色，或者继承 CameraController 的 palette。
-        color = np.array([1.0, 1.0, 0.0], dtype=float)  # 黄色，用来区分 NBV
+        color = rand_color.astype(float)
 
         rec = ViewRecord(
             name=view_name,

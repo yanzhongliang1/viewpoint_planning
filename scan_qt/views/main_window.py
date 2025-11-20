@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
 
         # ---- 基本窗口属性 ----
         self.setWindowTitle("NBV 控制面板（MVC）")
-        self.setFixedSize(1200, 700)
+        self.setFixedSize(1600, 700)
 
         self.setStyleSheet("""
                     QMainWindow {
@@ -194,7 +194,7 @@ class MainWindow(QMainWindow):
         lbl_near = QLabel("Near:")
         self.spin_cam_near = QDoubleSpinBox()
         self.spin_cam_near.setDecimals(3)
-        self.spin_cam_near.setRange(0.001, 100.0)
+        self.spin_cam_near.setRange(0.001, 1000)
         self.spin_cam_near.setSingleStep(0.01)
         self.spin_cam_near.setValue(self.camera_model.near)
         self.spin_cam_near.setMaximumWidth(80)
@@ -218,21 +218,21 @@ class MainWindow(QMainWindow):
         # Pos / Dir
         lbl_posx = QLabel("PosX:")
         self.spin_cam_posx = QDoubleSpinBox()
-        self.spin_cam_posx.setRange(-1000, 1000)
+        self.spin_cam_posx.setRange(-10000, 10000)
         self.spin_cam_posx.setSingleStep(0.1)
         self.spin_cam_posx.setValue(self.camera_model.position[0])
         self.spin_cam_posx.setMaximumWidth(80)
 
         lbl_posy = QLabel("PosY:")
         self.spin_cam_posy = QDoubleSpinBox()
-        self.spin_cam_posy.setRange(-1000, 1000)
+        self.spin_cam_posy.setRange(-10000, 10000)
         self.spin_cam_posy.setSingleStep(0.1)
         self.spin_cam_posy.setValue(self.camera_model.position[1])
         self.spin_cam_posy.setMaximumWidth(80)
 
         lbl_posz = QLabel("PosZ:")
         self.spin_cam_posz = QDoubleSpinBox()
-        self.spin_cam_posz.setRange(-1000, 1000)
+        self.spin_cam_posz.setRange(-10000, 10000)
         self.spin_cam_posz.setSingleStep(0.1)
         self.spin_cam_posz.setValue(self.camera_model.position[2])
         self.spin_cam_posz.setMaximumWidth(80)
@@ -408,6 +408,14 @@ class MainWindow(QMainWindow):
         nbv_group = QGroupBox("NBV / 下一最佳视点")
         nbv_layout = QHBoxLayout(nbv_group)
 
+        # 模式选择
+        nbv_layout.addWidget(QLabel("模式:"))
+        self.combo_nbv_mode = QComboBox()
+        self.combo_nbv_mode.addItems(["中心球壳", "表面法向外扩"])
+        self.combo_nbv_mode.setMaximumWidth(120)
+        self.combo_nbv_mode.currentIndexChanged.connect(self.slots.on_nbv_mode_changed)
+        nbv_layout.addWidget(self.combo_nbv_mode)
+
         # 体素大小
         nbv_layout.addWidget(QLabel("覆盖体素大小:"))
         self.spin_nbv_voxel = QDoubleSpinBox()
@@ -420,6 +428,7 @@ class MainWindow(QMainWindow):
         nbv_layout.addWidget(self.spin_nbv_voxel)
 
         # 候选视点数量
+        # 候选视点数量（sphere 模式下是候选方向数，surface 模式下是表面 anchor 数）
         nbv_layout.addWidget(QLabel("候选视点数:"))
         self.spin_nbv_candidates = QSpinBox()
         self.spin_nbv_candidates.setRange(1, 1000)
@@ -428,6 +437,16 @@ class MainWindow(QMainWindow):
         self.spin_nbv_candidates.setMaximumWidth(80)
         self.spin_nbv_candidates.valueChanged.connect(self.slots.on_nbv_params_changed)
         nbv_layout.addWidget(self.spin_nbv_candidates)
+
+        # NEW: 曲率权重
+        nbv_layout.addWidget(QLabel("曲率权重:"))
+        self.spin_nbv_curv_w = QDoubleSpinBox()
+        self.spin_nbv_curv_w.setRange(0.0, 5.0)
+        self.spin_nbv_curv_w.setSingleStep(0.1)
+        self.spin_nbv_curv_w.setValue(self.nbv_controller.curvature_weight)
+        self.spin_nbv_curv_w.setMaximumWidth(80)
+        self.spin_nbv_curv_w.valueChanged.connect(self.slots.on_nbv_curvature_weight_changed)
+        nbv_layout.addWidget(self.spin_nbv_curv_w)
 
         # 下一最佳视点按钮
         self.btn_nbv_next = QPushButton("计算下一最佳视点")
