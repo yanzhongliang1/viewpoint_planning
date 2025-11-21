@@ -158,11 +158,11 @@ class RobotPlanner:
         # 构造规划器
         planners = []
         for q0, q1, v, a, j in zip(
-            q0_ur5,
-            q_target_ur5,
-            self.model.max_vel_ur5_rad,
-            self.model.max_acc_ur5_rad,
-            self.model.max_jerk_ur5_rad
+                q0_ur5,
+                q_target_ur5,
+                self.model.max_vel_ur5_rad,
+                self.model.max_acc_ur5_rad,
+                self.model.max_jerk_ur5_rad
         ):
             planners.append(MoveToConfig1D(q0, q1, v, a, j, self.dt))
 

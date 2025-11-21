@@ -22,6 +22,7 @@ class RobotComm:
     FRAME_TURNTABLE = "J"
     FRAME_OBJECT = "O"
     FRAME_SCANNER = "S"
+    FRAME_BASE = "B"
 
     def __init__(self,
                  host: str = "127.0.0.1",
@@ -35,6 +36,7 @@ class RobotComm:
         self.handle_turtle = None   # {J}
         self.handle_object = None   # {O}
         self.handle_scan = None     # {S}
+        self.handle_base = None  # {B}
 
         # 可选：UR5 关节句柄（后续规划时用）
         self.ur5_joint_names = [f"joint{i}" for i in range(1, 7)]
@@ -77,6 +79,7 @@ class RobotComm:
         - turtle_joint 作为 {J}
         - receiver     作为 {O}
         - scan         作为 {S}
+        - base         作为 {B}
         """
         if self.client_id == -1:
             raise RobotCommError("还未连接 CoppeliaSim，无法初始化句柄")
@@ -116,6 +119,15 @@ class RobotComm:
         if err != sim.simx_return_ok:
             raise RobotCommError(
                 f"无法获取扫描仪句柄 'scan', err={err}"
+            )
+
+        # UR5 基座 {B}
+        err, self.handle_base = sim.simxGetObjectHandle(
+            self.client_id, "base", sim.simx_opmode_blocking
+        )
+        if err != sim.simx_return_ok:
+            raise RobotCommError(
+                f"无法获取 UR5 基座句柄 'base', err={err}"
             )
 
     def is_connected(self) -> bool:
@@ -228,6 +240,12 @@ class RobotComm:
         """
         return self._get_T_WX(self.handle_scan)
 
+    def get_T_WB(self) -> np.ndarray:
+        """
+        世界系下 UR5 基座 {B} 的变换矩阵 T_WB。
+        """
+        return self._get_T_WX(self.handle_base)
+
     # ----------------- 通用坐标系转换 -----------------
 
     def _get_T_W_by_frame_name(self, frame: str) -> np.ndarray:
@@ -240,6 +258,8 @@ class RobotComm:
             return self.get_T_WO()
         elif frame == self.FRAME_SCANNER:
             return self.get_T_WS()
+        elif frame == self.FRAME_BASE:
+            return self.get_T_WB()
         else:
             raise RobotCommError(f"未知坐标系名称: {frame}")
 
@@ -252,7 +272,7 @@ class RobotComm:
 
         输入：
           point: (3,) in from_frame
-          from_frame, to_frame in {"W","J","O","S"}
+          from_frame, to_frame in {"W","J","O","S","B"}
 
         输出：
           (3,) in to_frame
@@ -328,13 +348,14 @@ class RobotComm:
 
     def print_frames_info(self):
         """
-        打印 {W,J,O,S} 在世界系下的位姿 (pos, eulerXYZ[deg])。
+        打印 {W,J,O,S,B} 在世界系下的位姿 (pos, eulerXYZ[deg])。
         """
         frames = [
             (self.FRAME_WORLD, self.get_T_W()),
             (self.FRAME_TURNTABLE, self.get_T_WJ()),
             (self.FRAME_OBJECT, self.get_T_WO()),
             (self.FRAME_SCANNER, self.get_T_WS()),
+            (self.FRAME_BASE, self.get_T_WB()),
         ]
         print("========== Frame poses (World) ==========")
         for name, T in frames:

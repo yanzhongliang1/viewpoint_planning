@@ -25,7 +25,7 @@ class RobotMainWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # 让主窗口样式可以单独针对这个页面：
+        # 方便在全局 QSS 中单独定制机器人页面
         self.setObjectName("RobotPage")
 
         self.comm: RobotComm | None = None
@@ -45,7 +45,7 @@ class RobotMainWidget(QWidget):
         main_layout.setSpacing(6)
 
         # =========================================================
-        # 1. 顶部：连接控制（类似你 main_window 的“文件操作”那条）
+        # 1. 顶部：连接控制
         # =========================================================
         conn_group = QGroupBox("CoppeliaSim 连接")
         conn_layout = QHBoxLayout(conn_group)
@@ -101,29 +101,38 @@ class RobotMainWidget(QWidget):
         # ---------------- 左列：坐标系信息 ----------------
         frame_group = QGroupBox("坐标系位姿（相对于世界系 {W}）")
         frame_layout = QGridLayout(frame_group)
-        frame_layout.setHorizontalSpacing(8)
-        frame_layout.setVerticalSpacing(4)
+        frame_layout.setHorizontalSpacing(6)
+        frame_layout.setVerticalSpacing(3)
         frame_layout.setContentsMargins(8, 8, 8, 8)
 
         self.labels_frame = {}
-        frames = ["W", "J", "O", "S"]
-        for row, name in enumerate(frames):
+        frames = ["W", "J", "O", "S", "B"]
+        for i, name in enumerate(frames):
+            base_row = i * 2
+
+            # 第一行：名称 + pos
             lbl_name = QLabel(f"{name}:")
-            frame_layout.addWidget(lbl_name, row, 0)
+            frame_layout.addWidget(lbl_name, base_row, 0)
 
             lbl_pos = QLabel("pos: (0.000, 0.000, 0.000)")
-            lbl_euler = QLabel("rpy[deg]: (0.0, 0.0, 0.0)")
-            lbl_pos.setMinimumWidth(220)
-            lbl_euler.setMinimumWidth(220)
+            lbl_pos.setMinimumWidth(260)
+            frame_layout.addWidget(lbl_pos, base_row, 1, 1, 2)
 
-            frame_layout.addWidget(lbl_pos, row, 1)
-            frame_layout.addWidget(lbl_euler, row, 2)
+            # 第二行：空白 + rpy
+            spacer = QLabel("")  # 对齐占位
+            frame_layout.addWidget(spacer, base_row + 1, 0)
+
+            lbl_euler = QLabel("rpy[deg]: (0.0, 0.0, 0.0)")
+            lbl_euler.setMinimumWidth(260)
+            frame_layout.addWidget(lbl_euler, base_row + 1, 1, 1, 2)
 
             self.labels_frame[name] = (lbl_pos, lbl_euler)
 
+        # 刷新按钮单独一行
+        last_row = len(frames) * 2
         self.btn_refresh_frames = QPushButton("刷新坐标系")
         self.btn_refresh_frames.setMaximumWidth(120)
-        frame_layout.addWidget(self.btn_refresh_frames, len(frames), 0, 1, 1)
+        frame_layout.addWidget(self.btn_refresh_frames, last_row, 0, 1, 1)
 
         left_layout.addWidget(frame_group)
 
@@ -134,7 +143,7 @@ class RobotMainWidget(QWidget):
         t_layout.setVerticalSpacing(4)
         t_layout.setContentsMargins(8, 8, 8, 8)
 
-        # 源/目标坐标系选择
+        # 第 1 行：源/目标坐标系
         t_layout.addWidget(QLabel("源坐标系:"), 0, 0)
         self.combo_from_frame = QComboBox()
         self.combo_from_frame.addItems(["W", "J", "O", "S"])
@@ -147,7 +156,7 @@ class RobotMainWidget(QWidget):
         self.combo_to_frame.setMaximumWidth(80)
         t_layout.addWidget(self.combo_to_frame, 0, 3)
 
-        # 点坐标
+        # 第 2 行：点 p_src
         t_layout.addWidget(QLabel("点 p_src:"), 1, 0)
         self.spin_px = QDoubleSpinBox()
         self.spin_py = QDoubleSpinBox()
@@ -165,7 +174,7 @@ class RobotMainWidget(QWidget):
         self.btn_transform_point.setMaximumWidth(80)
         t_layout.addWidget(self.btn_transform_point, 1, 4)
 
-        # 方向向量
+        # 第 3 行：方向 v_src
         t_layout.addWidget(QLabel("方向 v_src:"), 2, 0)
         self.spin_vx = QDoubleSpinBox()
         self.spin_vy = QDoubleSpinBox()
@@ -192,7 +201,7 @@ class RobotMainWidget(QWidget):
         joint_group = QGroupBox("UR5 + 转台 关节状态与规划")
         j_layout = QGridLayout(joint_group)
         j_layout.setHorizontalSpacing(6)
-        j_layout.setVerticalSpacing(4)
+        j_layout.setVerticalSpacing(3)
         j_layout.setContentsMargins(8, 8, 8, 8)
 
         self.labels_joint_curr = {}
@@ -200,7 +209,7 @@ class RobotMainWidget(QWidget):
 
         joint_names = [f"joint{i}" for i in range(1, 7)] + ["turtle_joint"]
 
-        # 表头：当前 / 目标
+        # 表头：关节 / 当前 / 目标
         j_layout.addWidget(QLabel("关节"), 0, 0)
         j_layout.addWidget(QLabel("当前[deg]"), 0, 1)
         j_layout.addWidget(QLabel("目标[deg]"), 0, 2)
@@ -223,15 +232,15 @@ class RobotMainWidget(QWidget):
             self.spin_target_joints[name] = sp
             j_layout.addWidget(sp, row, 2)
 
-        # 右侧控制按钮列
+        # 右侧控制列
         col_btn = 3
         self.btn_refresh_joints = QPushButton("刷新关节")
         self.btn_refresh_joints.setMaximumWidth(110)
-        j_layout.addWidget(self.btn_refresh_joints, 0, col_btn, 1, 1)
+        j_layout.addWidget(self.btn_refresh_joints, 0, col_btn)
 
         self.btn_go_home = QPushButton("回 Home")
         self.btn_go_home.setMaximumWidth(110)
-        j_layout.addWidget(self.btn_go_home, 1, col_btn, 1, 1)
+        j_layout.addWidget(self.btn_go_home, 1, col_btn)
 
         j_layout.addWidget(QLabel("总 yaw 目标[deg]:"), 2, col_btn)
         self.spin_total_yaw_deg = QDoubleSpinBox()
@@ -243,11 +252,11 @@ class RobotMainWidget(QWidget):
 
         self.btn_go_yaw = QPushButton("执行 yaw 分配")
         self.btn_go_yaw.setMaximumWidth(110)
-        j_layout.addWidget(self.btn_go_yaw, 4, col_btn, 1, 1)
+        j_layout.addWidget(self.btn_go_yaw, 4, col_btn)
 
         self.btn_move_to_target = QPushButton("运动到目标配置")
         self.btn_move_to_target.setMaximumWidth(130)
-        j_layout.addWidget(self.btn_move_to_target, 5, col_btn, 1, 1)
+        j_layout.addWidget(self.btn_move_to_target, 5, col_btn)
 
         right_layout.addWidget(joint_group)
 
@@ -255,7 +264,7 @@ class RobotMainWidget(QWidget):
         joint_jog_group = QGroupBox("关节 JOG 拖动")
         jog_layout = QGridLayout(joint_jog_group)
         jog_layout.setHorizontalSpacing(6)
-        jog_layout.setVerticalSpacing(4)
+        jog_layout.setVerticalSpacing(3)
         jog_layout.setContentsMargins(8, 8, 8, 8)
 
         self.sliders_joints = {}
@@ -313,9 +322,6 @@ class RobotMainWidget(QWidget):
         self.label_status.setText(text)
 
     def on_connected(self, comm: RobotComm):
-        """
-        通讯建立成功时由 slots 调用。
-        """
         self.comm = comm
         self.robot_model = RobotModel()
         self.robot_planner = RobotPlanner(self.robot_model, self.comm)
@@ -326,9 +332,6 @@ class RobotMainWidget(QWidget):
         print("[RobotMainWidget] Connected.")
 
     def on_disconnected(self):
-        """
-        通讯关闭时由 slots 调用。
-        """
         if self.comm is not None:
             try:
                 self.comm.close()
@@ -345,9 +348,6 @@ class RobotMainWidget(QWidget):
         print("[RobotMainWidget] Disconnected.")
 
     def update_frames_display(self):
-        """
-        从 RobotComm 读取 {W,J,O,S} 的位姿并更新到 label。
-        """
         if self.comm is None or not self.comm.is_connected():
             self.set_status_text("未连接，无法刷新坐标系")
             return
@@ -357,6 +357,7 @@ class RobotMainWidget(QWidget):
             "J": self.comm.get_T_WJ(),
             "O": self.comm.get_T_WO(),
             "S": self.comm.get_T_WS(),
+            "B": self.comm.get_T_WB(),
         }
 
         for name, T in frames.items():
@@ -371,9 +372,6 @@ class RobotMainWidget(QWidget):
             )
 
     def update_joint_display(self):
-        """
-        刷新当前 UR5+转台关节角度显示（deg），并同步到 jog 滑条。
-        """
         if self.robot_planner is None or self.robot_model is None:
             return
 
@@ -381,7 +379,6 @@ class RobotMainWidget(QWidget):
         deg_ur5 = [np.degrees(v) for v in q_ur5]
         deg_turtle = float(np.degrees(q_turtle))
 
-        # 文本显示
         for i, name in enumerate(self.robot_model.ur5_joint_names):
             lbl = self.labels_joint_curr.get(name)
             if lbl is not None:
@@ -391,7 +388,7 @@ class RobotMainWidget(QWidget):
         if lbl_t is not None:
             lbl_t.setText(f"{deg_turtle:.2f}")
 
-        # 同步 jog 滑条和 jog 数值显示
+        # 同步 jog 滑条与显示
         for i, name in enumerate(self.robot_model.ur5_joint_names):
             if name in self.sliders_joints:
                 val_deg = deg_ur5[i]
@@ -408,9 +405,6 @@ class RobotMainWidget(QWidget):
             self.labels_jog_value[tname].setText(f"{deg_turtle:.1f}°")
 
     def closeEvent(self, event):
-        """
-        窗口关闭时，确保通讯关闭。
-        """
         if self.comm is not None:
             try:
                 self.comm.close()
