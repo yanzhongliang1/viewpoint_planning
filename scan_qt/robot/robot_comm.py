@@ -127,7 +127,7 @@ class RobotComm:
         )
         if err != sim.simx_return_ok:
             raise RobotCommError(
-                f"无法获取 UR5 基座句柄 'base', err={err}"
+                f"无法获取 UR5 基座句柄 'link1_visible', err={err}"
             )
 
     def is_connected(self) -> bool:

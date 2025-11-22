@@ -138,28 +138,45 @@ class RobotPlanner:
                        q_target_ur5: List[float],
                        turtle_target: float,
                        sync: bool = True):
-        """
-        七轴关节空间运动到目标配置：
-        - 输入为弧度制
-        - 自动进行关节限幅
-        - 简单使用 MoveToConfig1D 做梯形/三角速度轨迹
-        - 当前版本在主线程中执行，会阻塞 UI（后续可升级为 QThread）
-        """
+
         if not self.comm.is_connected():
             raise RobotCommError("未连接 CoppeliaSim，无法执行关节运动")
 
-        # 当前状态
+        # 当前状态（注意：这里读到的是 CoppeliaSim 的“连续关节角”）
         q0_ur5, q0_turtle = self.read_current_config()
 
-        # 限幅
+        # 限幅（按你模型中设定的 [-360°,360°] 或其他）
         q_target_ur5 = self.model.clamp_ur5_config_rad(q_target_ur5)
         turtle_target = self.model.clamp_turtle_rad(turtle_target)
 
-        # 构造规划器
+        # ===== 关键步骤：让目标角度“选最近的 2π 分支” =====
+        q1_adj_ur5 = []
+        for q0, q1 in zip(q0_ur5, q_target_ur5):
+            dq = q1 - q0
+            # 把 dq 压缩到 [-π, π]，即选最近分支
+            while dq > math.pi:
+                q1 -= 2.0 * math.pi
+                dq = q1 - q0
+            while dq < -math.pi:
+                q1 += 2.0 * math.pi
+                dq = q1 - q0
+            q1_adj_ur5.append(q1)
+
+        # 转台同样处理（如果转台逻辑上也是循环的）
+        q1_adj_turtle = turtle_target
+        dq_t = q1_adj_turtle - q0_turtle
+        while dq_t > math.pi:
+            q1_adj_turtle -= 2.0 * math.pi
+            dq_t = q1_adj_turtle - q0_turtle
+        while dq_t < -math.pi:
+            q1_adj_turtle += 2.0 * math.pi
+            dq_t = q1_adj_turtle - q0_turtle
+
+        # ===== 按“调整后的目标”构造规划器 =====
         planners = []
         for q0, q1, v, a, j in zip(
                 q0_ur5,
-                q_target_ur5,
+                q1_adj_ur5,
                 self.model.max_vel_ur5_rad,
                 self.model.max_acc_ur5_rad,
                 self.model.max_jerk_ur5_rad
@@ -168,13 +185,14 @@ class RobotPlanner:
 
         turtle_planner = MoveToConfig1D(
             q0_turtle,
-            turtle_target,
+            q1_adj_turtle,
             self.model.max_vel_turtle_rad,
             self.model.max_acc_turtle_rad,
             self.model.max_jerk_turtle_rad,
             self.dt,
         )
 
+        # ===== 后面的循环和你原来完全一样 =====
         active = True
         while active:
             active = False
@@ -207,8 +225,8 @@ class RobotPlanner:
 
             time.sleep(self.dt)
 
-        # 更新缓存
-        self.q_ur5 = q_target_ur5[:]
+        # 更新缓存：注意这里用“逻辑目标值”，方便后续规划
+        self.q_ur5 = q_target_ur5[:]  # 逻辑上你仍认为在 q_target
         self.q_turtle = turtle_target
 
         if sync:

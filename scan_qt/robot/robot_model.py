@@ -38,12 +38,12 @@ class RobotModel:
     # 关节限位（角度制）
     joint_limits_deg: Dict[str, JointLimit] = field(default_factory=lambda: {
         # 这里使用比较宽松的 UR5 范围（仅示意，可根据实际调整）
-        "joint1": JointLimit(-360.0, 360.0),
-        "joint2": JointLimit(-360.0, 360.0),
-        "joint3": JointLimit(-360.0, 360.0),
-        "joint4": JointLimit(-360.0, 360.0),
-        "joint5": JointLimit(-360.0, 360.0),
-        "joint6": JointLimit(-360.0, 360.0),
+        "joint1": JointLimit(-360.0, 720.0),
+        "joint2": JointLimit(-360.0, 720.0),
+        "joint3": JointLimit(-360.0, 720.0),
+        "joint4": JointLimit(-360.0, 720.0),
+        "joint5": JointLimit(-360.0, 720.0),
+        "joint6": JointLimit(-360.0, 720.0),
         # 转台：默认 [-180, 180]，可根据实际机械结构调整
         "turtle_joint": JointLimit(-180.0, 180.0),
     })
