@@ -200,11 +200,9 @@ class RobotIK:
                        approach_distance: float = 0.0) -> List[Tuple[str, bool, List[float], float]]:
         """
         批量求解视点 IK
-
         Args:
             viewpoints: [(name, position, direction), ...]
             approach_distance: 接近距离
-
         Returns:
             [(name, success, ur5_config, turtle_config), ...]
         """
