@@ -17,6 +17,10 @@ from scan_qt.controllers.camera_controller import CameraController
 from scan_qt.views.main_window_slots import MainWindowSlots
 from scan_qt.controllers.nbv_controller import NBVController
 
+# 引入工业风格样式表
+from scan_qt.views.robot_main_window_qss import get_qss
+
+
 class MainWindow(QMainWindow):
     """
     View（Qt）：只负责 UI，槽函数放在 MainWindowSlots 里。
@@ -29,62 +33,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("NBV 控制面板（MVC）")
         self.setFixedSize(1600, 700)
 
-        self.setStyleSheet("""
-                    QMainWindow {
-                        background-color: #2b2b2b;
-                        color: #dddddd;
-                    }
-                    QWidget {
-                        background-color: #2b2b2b;
-                        color: #dddddd;
-                        font-size: 10pt;
-                    }
-                    QGroupBox {
-                        border: 1px solid #555555;
-                        border-radius: 4px;
-                        margin-top: 8px;
-                    }
-                    QGroupBox::title {
-                        subcontrol-origin: margin;
-                        left: 8px;
-                        padding: 0 3px 0 3px;
-                    }
-                    QLabel {
-                        color: #dddddd;
-                    }
-                    QCheckBox, QRadioButton {
-                        color: #dddddd;
-                    }
-                    QPushButton {
-                        background-color: #444444;
-                        border: 1px solid #666666;
-                        border-radius: 3px;
-                        padding: 4px 10px;
-                    }
-                    QPushButton:hover {
-                        background-color: #555555;
-                    }
-                    QPushButton:pressed {
-                        background-color: #333333;
-                    }
-                    QSpinBox, QDoubleSpinBox, QComboBox {
-                        background-color: #3b3b3b;
-                        color: #dddddd;
-                        border: 1px solid #555555;
-                        border-radius: 2px;
-                    }
-                    QTableWidget {
-                        background-color: #3b3b3b;
-                        color: #dddddd;
-                        gridline-color: #555555;
-                    }
-                    QHeaderView::section {
-                        background-color: #3b3b3b;
-                        color: #dddddd;
-                        padding: 3px;
-                        border: 1px solid #555555;
-                    }
-                """)
+        # 使用外部工业风格样式表
+        self.setStyleSheet(get_qss())
 
         # ---- MVC 组件 ----
         self.model = ModelModel()
@@ -94,7 +44,7 @@ class MainWindow(QMainWindow):
         self.camera_model = CameraModel()
         self.camera_controller = CameraController(self.model, self.view3d, self.camera_model)
 
-        # NEW: NBV 控制器
+        # NBV 控制器
         self.nbv_controller = NBVController(self.model, self.camera_model, self.view3d)
 
         # 槽函数管理类
@@ -120,12 +70,14 @@ class MainWindow(QMainWindow):
         file_layout = QHBoxLayout(file_group)
 
         self.open_btn = QPushButton("打开 PLY")
+        self.open_btn.setObjectName("primaryButton")  # 主要按钮
         self.open_btn.clicked.connect(self.slots.open_file)
 
         self.save_btn = QPushButton("保存当前为 PLY")
         self.save_btn.clicked.connect(self.slots.save_file)
 
         self.file_label = QLabel("未选择文件")
+        self.file_label.setObjectName("statusLabel")  # 高亮状态标签
 
         file_layout.addWidget(self.open_btn)
         file_layout.addWidget(self.save_btn)
@@ -320,6 +272,7 @@ class MainWindow(QMainWindow):
         op_layout.addWidget(self.btn_update_frustum)
 
         self.btn_scan_once = QPushButton("扫描一帧")
+        self.btn_scan_once.setObjectName("primaryButton")  # 主要操作按钮
         self.btn_scan_once.clicked.connect(self.slots.on_scan_once_clicked)
         op_layout.addWidget(self.btn_scan_once)
 
@@ -443,7 +396,7 @@ class MainWindow(QMainWindow):
         self.spin_nbv_candidates.valueChanged.connect(self.slots.on_nbv_params_changed)
         nbv_layout.addWidget(self.spin_nbv_candidates)
 
-        # NEW: 曲率权重
+        # 曲率权重
         nbv_layout.addWidget(QLabel("曲率权重:"))
         self.spin_nbv_curv_w = QDoubleSpinBox()
         self.spin_nbv_curv_w.setRange(0.0, 5.0)
@@ -455,6 +408,7 @@ class MainWindow(QMainWindow):
 
         # 下一最佳视点按钮
         self.btn_nbv_next = QPushButton("计算下一最佳视点")
+        self.btn_nbv_next.setObjectName("primaryButton")  # 主要操作按钮
         self.btn_nbv_next.clicked.connect(self.slots.on_nbv_next_clicked)
         nbv_layout.addWidget(self.btn_nbv_next)
 
@@ -473,6 +427,7 @@ class MainWindow(QMainWindow):
         views_layout.addWidget(self.view_table)
 
         self.btn_delete_view = QPushButton("删除选中视点")
+        self.btn_delete_view.setObjectName("dangerButton")  # 危险操作按钮
         self.btn_delete_view.clicked.connect(self.slots.on_delete_selected_view)
         views_layout.addWidget(self.btn_delete_view)
 
@@ -489,6 +444,7 @@ class MainWindow(QMainWindow):
         views_layout.addWidget(self.btn_export_selected_scan)
 
         self.btn_export_all_scans = QPushButton("导出所有扫描点云")
+        self.btn_export_all_scans.setObjectName("primaryButton")  # 重要导出操作
         self.btn_export_all_scans.clicked.connect(self.slots.on_export_all_scans)
         views_layout.addWidget(self.btn_export_all_scans)
 
