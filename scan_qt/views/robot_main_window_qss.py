@@ -1,6 +1,6 @@
 # scan_qt/views/robot_main_window_qss.py
 """
-机器人控制界面样式表
+界面样式表
 工业风格设计
 """
 
