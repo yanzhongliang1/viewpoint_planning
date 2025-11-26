@@ -1,14 +1,11 @@
-from typing import Optional, Tuple, List
-import math
-
-# 引用你的 RobotComm 类和常量
+from typing import Optional, Tuple
 from scan_qt.test.robot_comm import RobotComm, Frames
 
 
 class RobotIK:
     """
     基于 simIK 的逆运动学解算器。
-    专为 UR5 + ZMQ Remote API 设计。
+    支持全姿态约束和仅位置约束切换。
     """
 
     def __init__(self, rc: RobotComm):
@@ -18,82 +15,78 @@ class RobotIK:
 
         # 初始化 IK 环境
         self.ik_env = self.simIK.createEnvironment()
-        self.ik_group = self.simIK.createGroup(self.ik_env)
 
-        # 配置 IK 链
-        self._setup_ur5_chain()
+        # --- 创建两个 IK 组 ---
+        # 1. 全约束 (位置 + 旋转) - 用于正常工作
+        self.ik_group_pose = self.simIK.createGroup(self.ik_env)
+        self._setup_group(self.ik_group_pose, self.simIK.constraint_pose)
+
+        # 2. 仅位置约束 (忽略旋转) - 用于调试或特殊情况
+        self.ik_group_pos = self.simIK.createGroup(self.ik_env)
+        self._setup_group(self.ik_group_pos, self.simIK.constraint_position)
 
         if self.rc.verbose:
-            print("[RobotIK] IK Environment & Group initialized.")
+            print("[RobotIK] IK Environment initialized (Pose & Position modes).")
 
-    def _setup_ur5_chain(self):
-        """内部配置：建立 Base -> Tip 的 IK 约束链"""
-
-        # 设置 IK 模式：同时约束位置(X,Y,Z)和姿态(Alpha,Beta,Gamma)
-        # 对应 simIK.constraint_pose (位姿全约束)
-        # 注意：ZMQ API 中常量通常在 simIK 命名空间下
-        constraints = self.simIK.constraint_position | self.simIK.constraint_orientation
-
-        # 添加从场景获取的元素
-        # 逻辑：Tip (Follower) 将尝试重合于 Target (Leader)
-        self.ik_element = self.simIK.addElementFromScene(
+    def _setup_group(self, group_handle, constraint_type):
+        """辅助函数：配置 IK 链"""
+        self.simIK.addElementFromScene(
             self.ik_env,
-            self.ik_group,
-            self.rc.handles.base,  # 链的基座
-            self.rc.handles.tip,  # 链的末端 (Follower)
-            self.rc.handles.target,  # 目标 Dummy (Leader)
-            constraints
+            group_handle,
+            self.rc.handles.base,  # Base
+            self.rc.handles.tip,  # Tip
+            self.rc.handles.target,  # Target
+            constraint_type
         )
-
-        # 设置解算方法：DLS (Damped Least Squares) 通常比 PseudoInverse 更稳定
-        # 参数: env, group, method, damping, maxIterations
+        # 设置解算方法 (DLS)
         self.simIK.setGroupCalculation(
             self.ik_env,
-            self.ik_group,
+            group_handle,
             self.simIK.method_damped_least_squares,
-            0.1,  # 阻尼系数
-            100  # 最大迭代次数
+            0.1,
+            100
         )
 
     def solve(self,
               pos: Tuple[float, float, float],
               quat: Tuple[float, float, float, float],
               ref_frame: str = Frames.WORLD,
-              restore_if_fail: bool = True) -> Optional[Tuple[float, ...]]:
+              restore_if_fail: bool = True,
+              ignore_rotation: bool = False) -> Optional[Tuple[float, ...]]:
+        """
+        执行 IK 解算
+        :param ignore_rotation: 如果为 True，则只匹配位置，忽略朝向
+        """
 
-        # 1. 【记录起点】
+        # 1. 记录起点
         start_angles = self.rc.get_ur5_angles()
 
         try:
-            # 2. 设置 Target 位置
+            # 2. 设置 Target 位姿
             h_ref = self.rc._resolve_frame(ref_frame)
             self.sim.setObjectPose(self.rc.handles.target, h_ref, list(pos) + list(quat))
 
-            # 3. 运行解算 (syncWorlds=True 会导致机器人瞬移到目标姿态)
+            # 3. 选择使用哪个 IK 组
+            active_group = self.ik_group_pos if ignore_rotation else self.ik_group_pose
+
+            # 4. 运行解算
             result, _, _ = self.simIK.handleGroup(
                 self.ik_env,
-                self.ik_group,
+                active_group,
                 {'syncWorlds': True, 'allowError': True}
             )
 
-            # 1 = simIK.result_success
-            # 2 = simIK.result_success_with_error (例如使用了阻尼)
+            # 1 = Success, 2 = Success with error
             success = (result == 1) or (result == 2)
 
             if success:
-                # 4. 【获取答案】此时机器人处于目标姿态，读取角度
                 solved_angles = self.rc.get_ur5_angles()
-
-                # 5. 【关键修正：复位】
-                # 无论是否成功，为了让物理引擎能演示"移动过程"，
-                # 我们必须把机器人瞬间搬回起点。
+                # 复位 (为了让物理引擎平滑移动)
                 self.rc.set_ur5_angles(start_angles, instant=True)
-
                 return solved_angles
             else:
                 if self.rc.verbose:
                     print(f"[RobotIK] Failed. Result code: {result}")
-                # 失败了也复位
                 if restore_if_fail:
                     self.rc.set_ur5_angles(start_angles, instant=True)
                 return None

@@ -1,6 +1,6 @@
 import numpy as np
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any
 from scan_qt.test.robot_comm import Frames
 
 
@@ -87,7 +87,9 @@ class RobotPath:
 
                 self.sim.setObjectPose(vp.handle, self.rc.handles.world, pos + list(quat))
 
-    def get_vp_world_pose(self, index: int) -> Tuple[list, list]:
+    def get_vp_world_pose(self, index: int) -> tuple[Any, tuple[
+                                                              float | Any, float | Any, float | Any, float | Any] | Any] | \
+                                               tuple[None, None]:
         """获取指定视点当前的实时世界坐标 (Pos, Quat)"""
         if 0 <= index < len(self.viewpoints):
             vp = self.viewpoints[index]
@@ -97,7 +99,13 @@ class RobotPath:
             T_final = T_world_obj @ vp.local_matrix
 
             pos = T_final[:3, 3].tolist()
-            quat = self._matrix_to_quat(T_final[:3, :3])
+            quat_np = self._matrix_to_quat(T_final[:3, :3])
+
+            if isinstance(quat_np, np.ndarray):
+                quat = quat_np.tolist()
+            else:
+                quat = quat_np
+
             return pos, quat
         return None, None
 
@@ -124,7 +132,8 @@ class RobotPath:
         m = np.array(m_list).reshape(3, 4)
         return np.vstack([m, [0, 0, 0, 1]])
 
-    def _calc_rotation_matrix_from_dir(self, direction):
+    @staticmethod
+    def _calc_rotation_matrix_from_dir(direction):
         z = direction / np.linalg.norm(direction)
         up = np.array([0, 0, 1]) if abs(z[2]) < 0.99 else np.array([0, 1, 0])
         x = np.cross(up, z);
@@ -132,7 +141,8 @@ class RobotPath:
         y = np.cross(z, x)
         return np.column_stack((x, y, z))
 
-    def _matrix_to_quat(self, R):
+    @staticmethod
+    def _matrix_to_quat(R):
         # 简化的矩阵转四元数 (需确保正确实现，此处略写为占位，建议使用 scipy.spatial.transform 或完整实现)
         # 为了完整性，这里提供一个简单的实现
         tr = np.trace(R)
@@ -161,3 +171,20 @@ class RobotPath:
             qy = (R[1, 2] + R[2, 1]) / S
             qz = 0.25 * S
         return (qx, qy, qz, qw)
+
+    def clear_trail(self):
+        """清除场景中的红色轨迹线"""
+        if self.trail_handle != -1:
+            try:
+                self.sim.removeDrawingObject(self.trail_handle)
+                print("[Path] Trail cleared.")
+            except Exception as e:
+                print(f"[Path] Warning: Failed to clear trail. {e}")
+            finally:
+                # 无论成功失败，重置句柄，防止二次删除报错
+                self.trail_handle = -1
+
+    def clear_all(self):
+        """一键清除所有视觉元素（轨迹 + Dummy）"""
+        self.clear_trail()
+        self.clear_visuals()
