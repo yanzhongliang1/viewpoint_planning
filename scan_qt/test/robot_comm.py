@@ -29,8 +29,11 @@ class RobotComm:
 
         # 1. 连接 API
         self.client = RemoteAPIClient(host=host, port=port)
+        print("[RobotComm] Client object created. Handshaking...")  # 新增
         self.sim = self.client.require("sim")
+        print("[RobotComm] sim Connection successful!")  # 新增
         self.simIK = self.client.require("simIK")
+        print("[RobotComm] simIK Connection successful!")  # 新增
 
         # 2. 初始化句柄 (全部作为成员属性)
         self.handles = self._init_handles()

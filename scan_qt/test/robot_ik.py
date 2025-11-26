@@ -60,56 +60,47 @@ class RobotIK:
               quat: Tuple[float, float, float, float],
               ref_frame: str = Frames.WORLD,
               restore_if_fail: bool = True) -> Optional[Tuple[float, ...]]:
-        """
-        执行 IK 解算。
 
-        :param pos: 目标位置 (x, y, z)
-        :param quat: 目标姿态 (qx, qy, qz, qw)
-        :param ref_frame: 目标位姿的参考坐标系 (默认为世界坐标系)
-        :param restore_if_fail: 如果解算失败，是否将机器人恢复原位 (默认为 True)
-        :return: 成功返回 6个关节角度的元组，失败返回 None
-        """
-
-        # 1. 记录当前关节角度 (用于失败恢复或纯计算模式)
-        initial_angles = self.rc.get_ur5_angles()
+        # 1. 【记录起点】
+        start_angles = self.rc.get_ur5_angles()
 
         try:
-            # 2. 将场景中的 Target Dummy 移动到指定的目标位姿
-            # IK 解算器是让 Tip 追逐这个 Target
+            # 2. 设置 Target 位置
             h_ref = self.rc._resolve_frame(ref_frame)
-            h_target = self.rc.handles.target
+            self.sim.setObjectPose(self.rc.handles.target, h_ref, list(pos) + list(quat))
 
-            # 设置 Target 位姿
-            self.sim.setObjectPose(h_target, h_ref, list(pos) + list(quat))
-
-            # 3. 运行 IK 解算器
-            # simIK.handleGroup 会尝试移动场景中的关节以满足约束
-            # allowError=True 允许一定误差内算作成功
-            result, precision, passes = self.simIK.handleGroup(
+            # 3. 运行解算 (syncWorlds=True 会导致机器人瞬移到目标姿态)
+            result, _, _ = self.simIK.handleGroup(
                 self.ik_env,
                 self.ik_group,
                 {'syncWorlds': True, 'allowError': True}
             )
 
-            # simIK.result_success = 1, result_success_with_error = 2
-            # 这里我们认为只要不是失败(result < 0) 或未收敛，都可以接受
-            success = (result == self.simIK.result_success) or (result == self.simIK.result_success_with_error)
+            # 1 = simIK.result_success
+            # 2 = simIK.result_success_with_error (例如使用了阻尼)
+            success = (result == 1) or (result == 2)
 
             if success:
-                # 获取解算后的关节角度
+                # 4. 【获取答案】此时机器人处于目标姿态，读取角度
                 solved_angles = self.rc.get_ur5_angles()
+
+                # 5. 【关键修正：复位】
+                # 无论是否成功，为了让物理引擎能演示"移动过程"，
+                # 我们必须把机器人瞬间搬回起点。
+                self.rc.set_ur5_angles(start_angles, instant=True)
+
                 return solved_angles
             else:
                 if self.rc.verbose:
-                    print(f"[RobotIK] Failed. Result code: {result}, Precision: {precision}")
+                    print(f"[RobotIK] Failed. Result code: {result}")
+                # 失败了也复位
                 if restore_if_fail:
-                    self.rc.set_ur5_angles(initial_angles, instant=True)
+                    self.rc.set_ur5_angles(start_angles, instant=True)
                 return None
 
         except Exception as e:
             print(f"[RobotIK] Exception: {e}")
-            # 发生异常时务必恢复，防止机器人飞掉
-            self.rc.set_ur5_angles(initial_angles, instant=True)
+            self.rc.set_ur5_angles(start_angles, instant=True)
             return None
 
     def check_reachability(self, pos, quat, ref_frame=Frames.WORLD) -> bool:
