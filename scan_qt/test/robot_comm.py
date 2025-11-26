@@ -91,7 +91,7 @@ class RobotComm:
     # 2. 机器人与转台控制 (Motion Control)
     # ---------------------------------------------------------
 
-    def set_ur5_angles(self, angles: Tuple[float, ...], instant: bool = False):
+    def  set_ur5_angles(self, angles: Tuple[float, ...], instant: bool = False):
         """
         设置 UR5 6个关节角度。
         :param instant: False(默认)=物理驱动(Dynamics), True=强制瞬移(Kinematics)
@@ -141,6 +141,31 @@ class RobotComm:
             Frames.OBJECT: self.handles.receiver
         }
         return mapping.get(name, self.handles.world)
+
+    def get_handle_position(self, handle: int, relative_to_handle: int = None) -> tuple[float]:
+        """
+        直接根据整数句柄获取位置
+        :param relative_to_handle
+        :return: [x, y, z]
+        """
+        ref = relative_to_handle if relative_to_handle is not None else self.sim.handle_world
+        return self.sim.getObjectPosition(handle, ref)
+
+    def get_handle_quaternion(self, handle: int, relative_to_handle: int = None) -> tuple[float]:
+        """
+        直接根据整数句柄获取旋转 (四元数)
+        :return: [x, y, z, w]
+        """
+        ref = relative_to_handle if relative_to_handle is not None else self.sim.handle_world
+        return self.sim.getObjectQuaternion(handle, ref)
+
+    def get_handle_orientation(self, handle: int, relative_to_handle: int = None) -> tuple[float]:
+        """
+        直接根据整数句柄获取旋转 (欧拉角)
+        :return: [alpha, beta, gamma] (弧度)
+        """
+        ref = relative_to_handle if relative_to_handle is not None else self.sim.handle_world
+        return self.sim.getObjectOrientation(handle, ref)
 
     def close(self):
         pass  # ZMQ Client 自动管理资源
