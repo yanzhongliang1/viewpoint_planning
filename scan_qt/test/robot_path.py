@@ -1,3 +1,4 @@
+# scan_qt/test/robot_path.py
 import numpy as np
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Any
@@ -128,7 +129,8 @@ class RobotPath:
             self.sim.addDrawingObjectItem(self.trail_handle, list(pos))
 
     # --- 数学工具 ---
-    def _sim_matrix_to_numpy(self, m_list):
+    @staticmethod
+    def _sim_matrix_to_numpy(m_list):
         m = np.array(m_list).reshape(3, 4)
         return np.vstack([m, [0, 0, 0, 1]])
 
@@ -136,7 +138,7 @@ class RobotPath:
     def _calc_rotation_matrix_from_dir(direction):
         z = direction / np.linalg.norm(direction)
         up = np.array([0, 0, 1]) if abs(z[2]) < 0.99 else np.array([0, 1, 0])
-        x = np.cross(up, z);
+        x = np.cross(up, z)
         x /= np.linalg.norm(x)
         y = np.cross(z, x)
         return np.column_stack((x, y, z))
@@ -158,11 +160,11 @@ class RobotPath:
             qx = 0.25 * S
             qy = (R[0, 1] + R[1, 0]) / S
             qz = (R[0, 2] + R[2, 0]) / S
-        elif (R[1, 1] > R[2, 2]):
+        elif R[1, 1] > R[2, 2]:
             S = np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2]) * 2
             qw = (R[0, 2] - R[2, 0]) / S
             qx = (R[0, 1] + R[1, 0]) / S
-            qy = 0.25 * S;
+            qy = 0.25 * S
             qz = (R[1, 2] + R[2, 1]) / S
         else:
             S = np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2
@@ -170,7 +172,7 @@ class RobotPath:
             qx = (R[0, 2] + R[2, 0]) / S
             qy = (R[1, 2] + R[2, 1]) / S
             qz = 0.25 * S
-        return (qx, qy, qz, qw)
+        return qx, qy, qz, qw
 
     def clear_trail(self):
         """清除场景中的红色轨迹线"""
