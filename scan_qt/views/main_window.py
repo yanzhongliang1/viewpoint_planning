@@ -378,7 +378,7 @@ class MainWindow(QMainWindow):
         nbv_layout.addWidget(QLabel("覆盖体素大小:"))
         self.spin_nbv_voxel = QDoubleSpinBox()
         self.spin_nbv_voxel.setDecimals(5)
-        self.spin_nbv_voxel.setRange(1e-5, 1.0)
+        self.spin_nbv_voxel.setRange(1e-5, 10)
         self.spin_nbv_voxel.setSingleStep(0.001)
         self.spin_nbv_voxel.setValue(self.nbv_controller.voxel_size)
         self.spin_nbv_voxel.setMaximumWidth(100)
