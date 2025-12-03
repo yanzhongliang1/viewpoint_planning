@@ -1,5 +1,5 @@
 # scan_qt/main.py
-from scan_qt.views.main_window import MainWindow
+from scan_qt.viewpoints_views.main_window import MainWindow
 from PyQt5.QtWidgets import (
     QApplication
 )

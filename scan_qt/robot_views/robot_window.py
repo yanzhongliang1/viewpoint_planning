@@ -1,74 +1,122 @@
 # scan_qt/robot_views/robot_window.py
 import numpy as np
-from PyQt5.QtWidgets import QMainWindow
+import logging
 from PyQt5.QtCore import QMutex
 
-# 导入各模块
+# 导入模块
 from scan_qt.robot_views.robot_view import RobotView
 from scan_qt.robot_views.robot_window_slots import RobotWindowSlots
 from scan_qt.robot_views.robot_window_qss import QSS
 from scan_qt.robot_views.robot_workers import MonitorThread
-from scan_qt.robot_views.logger import setup_logging
 
 
 class RobotWindow(RobotView, RobotWindowSlots):
-    """
-    主窗口类：继承自 View (界面) 和 Slots (逻辑)
-    这种多重继承方式在 PyQt 开发中很常见，能有效分离 UI 和 逻辑。
-    """
-
     def __init__(self):
-        # 初始化 View (RobotView 继承自 QMainWindow)
         super().__init__()
 
-        # 1. 基础设置
-        self.setWindowTitle("CoppeliaSim UR5 Control Station (Pro)")
-        self.resize(1600, 900)
         self.setStyleSheet(QSS)
+        self.setWindowTitle("CoppeliaSim Control Center (Stable)")
+        self.resize(1400, 900)
 
-        # 2. 初始化图表 (View 中的方法)
-        self.create_plots()
+        # 1. 初始化全局互斥锁 (Core Mutex)
+        self.zmq_mutex = QMutex()
 
-        # 3. 初始化核心变量
+        # 2. 初始化变量
         self.rc = None
         self.ik = None
         self.path = None
+        self.plot_data = np.zeros((7, 200))
         self.programmatic_update = False
 
-        # === 关键：创建互斥锁 ===
-        # 这个锁将用于所有 ZMQ 通讯，防止多线程冲突导致 crash
-        self.zmq_mutex = QMutex()
-
-        # 4. 数据缓冲
-        self.plot_data = np.zeros((7, 200))  # 7条曲线，200个点
-
-        # 5. 日志
-        self.log_handler = setup_logging()
-        self.log_handler.log_signal.connect(self.append_log)
-
-        # 6. 初始化监控线程 (传入 Mutex)
-        self.monitor_thread = MonitorThread(None, self.zmq_mutex)
+        # 3. 初始化线程 (传入锁)
+        self.monitor_thread = MonitorThread(self.zmq_mutex)
         self.monitor_thread.data_signal.connect(self.update_data)
 
-        # 7. 绑定信号槽 (Slots 中的方法)
+        # 4. 配置日志桥接
+        self.setup_logging_bridge()
+
+        # 5. 初始化图表和连接
+        self.create_plots()
         self.setup_connections()
 
-    def append_log(self, level, msg):
-        """处理日志显示"""
-        color = "#ffffff"
-        if level == "INFO":
-            color = "#69f0ae"
-        elif level == "WARNING":
-            color = "#ffd740"
-        elif level == "ERROR":
-            color = "#ff5252"
+    def setup_logging_bridge(self):
+        """将 Python logging 系统桥接到 UI 的 LogWidget"""
 
-        # 自动滚动
-        self.log_text.append(f'<span style="color:{color};">[{level}] {msg}</span>')
-        sb = self.log_text.verticalScrollBar()
-        sb.setValue(sb.maximum())
+        # 定义一个简单的 Handler 类
+        class BridgeHandler(logging.Handler):
+            def __init__(self, widget):
+                super().__init__()
+                self.widget = widget
+
+            def emit(self, record):
+                msg = self.format(record)
+                # 直接调用 LogWidget 的 log 方法
+                # 注意：这里是在发出 log 的线程中调用的，
+                # 但 PyQt 的 QTextEdit.append 是线程安全的 (大多情况下)，或者 LogWidget 内部可以用 Signal 优化
+                # 鉴于您的 LogWidget 没有定义 Signal，这里假设直接调用。
+                # 最稳妥的方式是在 LogWidget 里定义 pyqtSignal 并 connect
+                self.widget.log(msg, record.levelname)
+
+        # 获取 root logger
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+        # 清理默认 handler，避免控制台重复输出
+        # if logger.hasHandlers(): logger.handlers.clear()
+
+        # 添加桥接 Handler
+        bridge = BridgeHandler(self.log_widget)
+        formatter = logging.Formatter('%(message)s')
+        bridge.setFormatter(formatter)
+        logger.addHandler(bridge)
+
+        # --------------------------------------------------------
+        # 日志桥接优化：确保线程安全
+        # --------------------------------------------------------
+        # 如果您使用的是标准 logging，建议定义一个 Signal 来跨线程更新 UI
+        # 但由于您的 LogWidget 比较简单，且 QTextEdit 的 append 在某些 PyQt 版本是线程安全的，
+        # 上面的直接调用可能也能工作。为了最稳妥，建议改为：
+
+    def setup_logging_bridge_safe(self):
+        """线程安全的日志桥接"""
+        import logging
+
+        # 1. 定义一个信号接收器 (必须继承 QObject)
+        from PyQt5.QtCore import QObject, pyqtSignal
+
+        class LogBridge(QObject):
+            new_log = pyqtSignal(str, str)  # msg, level
+
+        self.log_bridge = LogBridge()
+        self.log_bridge.new_log.connect(self.log_widget.log)  # 连接到 UI 组件
+
+        # 2. 定义 Handler
+        class SafeHandler(logging.Handler):
+            def __init__(self, signal_emitter):
+                super().__init__()
+                self.emitter = signal_emitter
+
+            def emit(self, record):
+                msg = self.format(record)
+                # 发送信号 (线程安全)
+                self.emitter.new_log.emit(msg, record.levelname)
+
+        # 3. 配置 Logger
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+        # 清除旧 Handler (防止重复)
+        for h in logger.handlers:
+            logger.removeHandler(h)
+
+        h = SafeHandler(self.log_bridge)
+        h.setFormatter(logging.Formatter('%(message)s'))
+        logger.addHandler(h)
 
     def closeEvent(self, event):
-        """窗口关闭事件"""
+        """窗口关闭事件：确保资源释放"""
         self.close_app_cleanup()
         event.accept()
+
+    # 覆盖 __init__ 中的调用
+    # 在 RobotWindow.__init__ 中，将 self.setup_logging_bridge() 改为 self.setup_logging_bridge_safe()

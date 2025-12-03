@@ -387,7 +387,7 @@ def compute_next_best_view(
 
     views = sample_candidate_views(center, radius, num_candidates)
     if not views:
-        print("[NBV] no candidate views.")
+        print("[NBV] no candidate viewpoints_views.")
         return None
 
     best_gain = -1

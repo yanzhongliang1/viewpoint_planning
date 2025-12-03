@@ -4,7 +4,7 @@ import numpy as np
 import open3d as o3d
 
 from scan_qt.models.model_model import ModelModel
-from scan_qt.views.model_view import ModelView
+from scan_qt.viewpoints_views.model_view import ModelView
 
 
 class ModelController:
@@ -90,7 +90,7 @@ class ModelController:
             self.model.current_geom = self.model.base_geom
 
         self._update_bbox_from_current()
-        self.view.render_scene(self.model, recenter=True)
+        self.view.render_scene(self.model)
 
     def apply_voxel_downsample(self, voxel_size: float):
         if self.model.base_geom is None:
@@ -110,7 +110,7 @@ class ModelController:
         self.model.current_geom = self.model.downsampled_pcd
 
         self._update_bbox_from_current()
-        self.view.render_scene(self.model, recenter=True)
+        self.view.render_scene(self.model)
 
     def toggle_voxel_grid(self, show: bool):
         self.model.show_voxel = bool(show)

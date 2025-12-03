@@ -4,7 +4,7 @@ import open3d as o3d
 
 from scan_qt.models.model_model import ModelModel
 from scan_qt.models.camera_model import CameraModel
-from scan_qt.views.model_view import ModelView
+from scan_qt.viewpoints_views.model_view import ModelView
 from scan_qt.core.camera_core import build_frustum_lines, simulate_scan_simple
 
 class ViewRecord:

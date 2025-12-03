@@ -1,123 +1,167 @@
 # scan_qt/robot_views/robot_window_slots.py
 import math
+import time
 import logging
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from PyQt5.QtWidgets import QFileDialog, QMessageBox, QTableWidgetItem, QColorDialog
+from PyQt5.QtWidgets import QFileDialog, QMessageBox, QTableWidgetItem
 from PyQt5.QtCore import QMutex
 
+# 引入 Backend
 from scan_qt.test.robot_comm import RobotComm, Frames
 from scan_qt.test.robot_ik import RobotIK
 from scan_qt.test.robot_path import RobotPath
+from scan_qt.robot_views.robot_workers import AutoScanWorker
 
 
 class RobotWindowSlots:
+    """混入类：负责所有业务逻辑"""
+
     def setup_connections(self):
+        # 连接
         self.btn_connect.clicked.connect(self.on_connect)
         self.btn_disconnect.clicked.connect(self.on_disconnect)
-        self.btn_home.clicked.connect(self.on_home)
 
-        # 联动控制
+        # 运动控制
+        self.btn_home.clicked.connect(self.on_home)
         for i, (slider, spin) in enumerate(zip(self.sliders, self.spinboxes)):
             slider.valueChanged.connect(lambda val, idx=i: self.on_slider_change(idx, val))
             spin.valueChanged.connect(lambda val, idx=i: self.on_spin_change(idx, val))
 
-        # 轨迹与视点
+        # 视点与轨迹
         self.chk_show_traj.toggled.connect(self.on_toggle_traj)
-        self.btn_export_plot.clicked.connect(self.on_export_matplotlib)
         self.btn_clear_traj.clicked.connect(self.on_clear_traj)
+        self.btn_export_plot.clicked.connect(self.on_export_matplotlib)
         self.btn_create_manual.clicked.connect(self.on_create_manual_dummy)
         self.btn_load_file.clicked.connect(self.on_load_vp_file)
-        self.btn_ik_move.clicked.connect(self.on_ik_move_to_selected)
+
+        # 智能运动
+        self.btn_ik_move.clicked.connect(self.on_ik_move_smart)
+        # === [新增] 连接新按钮 ===
+        self.btn_full_scan.clicked.connect(self.on_start_full_scan)
+        self.btn_stop_scan.clicked.connect(self.on_stop_full_scan)
 
         # UI 显隐
-        self.chk_show_plot.toggled.connect(lambda x: self.dock_plot.setVisible(x))
+        self.chk_show_plot.toggled.connect(lambda x: self.plot_widget.setVisible(x))
 
-    # --- 连接 ---
+    # --- 1. 稳健连接与断开 ---
     def on_connect(self):
         host = self.edit_host.text()
         port = int(self.edit_port.text())
 
+        # 在连接期间加锁，防止其他操作干扰初始化
+        self.zmq_mutex.lock()
         try:
-            # 加锁进行初始化，防止冲突
-            self.zmq_mutex.lock()
-
             logging.info(f"Connecting to {host}:{port}...")
-            # 1. 实例化
+
+            # 初始化 Backend
             self.rc = RobotComm(host=host, port=port, start_sim=True)
             self.ik = RobotIK(self.rc)
             self.path = RobotPath(self.rc)
 
-            # 2. 配置监控线程
+            # 配置线程并启动
             self.monitor_thread.rc = self.rc
-            self.monitor_thread.start()
+            if not self.monitor_thread.isRunning():
+                self.monitor_thread.start()
 
-            # 3. 初始化状态
+            # 初始化轨迹状态
             self.path.init_trail()
             self.monitor_thread.recording_traj = True
 
-            self.zmq_mutex.unlock()
-
             # UI 更新
-            self.status_label.setText(f"已连接: {host}")
+            self.status_label.setText(f"Connected: {host}")
             self.btn_connect.setEnabled(False)
             self.btn_disconnect.setEnabled(True)
             self.edit_host.setEnabled(False)
             self.edit_port.setEnabled(False)
-            logging.info("系统连接成功")
+            logging.info("系统连接成功 (System Online)")
 
         except Exception as e:
-            self.zmq_mutex.unlock()  # 确保解锁
             logging.error(f"连接失败: {e}")
-            QMessageBox.critical(self, "连接错误", f"无法连接到仿真软件。{e}")
-
-    def on_disconnect(self):
-        self.monitor_thread.stop()
-
-        self.zmq_mutex.lock()
-        if self.rc:
-            try:
-                self.rc.stop()
-            except:
-                pass
+            QMessageBox.critical(self, "连接错误", f"无法连接到 CoppeliaSim。{e}")
             self.rc = None
-        self.zmq_mutex.unlock()
+        finally:
+            self.zmq_mutex.unlock()
 
+    # --- 1. 稳健连接与断开 ---
+    def on_disconnect(self):
+        logging.info("正在断开连接...")
+
+        # 1. 第一步：停止监控线程
+        if hasattr(self, 'monitor_thread'):
+            self.monitor_thread.stop()
+            self.monitor_thread.wait()  # 等待线程完全退出
+
+        # 2. 第二步：加锁清理资源
+        self.zmq_mutex.lock()
+        try:
+            if self.rc:
+                # === [新增需求] 清除所有轨迹和 Dummy ===
+                try:
+                    logging.info("清理场景对象...")
+                    if self.path:
+                        self.path.clear_all()  # 清除 Dummy 和 3D轨迹线
+                    if hasattr(self.monitor_thread, 'clear_trajectory'):
+                        self.monitor_thread.clear_trajectory()  # 清除内存数据
+                except Exception as e:
+                    logging.warning(f"清理场景失败: {e}")
+
+                # === [关键修复] 解决重连报错 ===
+                # 不要强行调用 sim.stopSimulation() 后立即销毁对象。
+                # ZMQ Server 需要一点时间来处理停止命令。
+                try:
+                    # 只有在仿真还在运行时才停止
+                    if self.rc.sim.getSimulationState() != self.rc.sim.simulation_stopped:
+                        self.rc.sim.stopSimulation()
+                        # 给一点点时间让指令发送出去，防止 socket 突然断开导致 server 报错
+                        time.sleep(0.2)
+                except:
+                    pass
+
+                # 显式删除引用，触发 Python ZMQ 的析构
+                del self.rc
+
+        except Exception as e:
+            logging.error(f"清理资源时出错: {e}")
+        finally:
+            self.rc = None  # 指针置空
+            self.zmq_mutex.unlock()
+
+        # 3. 恢复 UI 状态
         self.btn_connect.setEnabled(True)
         self.btn_disconnect.setEnabled(False)
         self.edit_host.setEnabled(True)
         self.edit_port.setEnabled(True)
-        self.status_label.setText("已断开")
+        self.status_label.setText("已断开 / Disconnected")
+        logging.info("连接已安全断开")
 
-    # --- 机器人控制 (加锁保护) ---
+    # --- 2. 机器人控制 (全部加锁) ---
     def on_home(self):
         if not self.rc: return
         self.zmq_mutex.lock()
         try:
-            self.rc.set_ur5_angles((0,) * 6)
-            self.rc.set_turntable_angle(0)
+            logging.info("执行归位 (Homing)...")
+            self.rc.set_ur5_angles((0, -math.pi / 2, 0, -math.pi / 2, 0, 0))
+            self.rc.set_turntable_angle(0.0)
         finally:
             self.zmq_mutex.unlock()
 
     def _send_joint_command(self, idx, deg):
         if not self.rc or self.programmatic_update: return
 
-        # 尝试获取锁，如果获取不到(正在读取数据)，则跳过此次发送，防止界面卡顿
-        if self.zmq_mutex.tryLock(10):
+        # 使用 tryLock，如果后台正在忙（例如 IK 解算），则跳过此次滑条更新，避免卡顿
+        if self.zmq_mutex.tryLock(20):
             try:
                 rad = math.radians(deg)
                 if idx < 6:
-                    # 获取当前所有关节（注意：这里也会调用ZMQ）
-                    # 为了安全，建议 Monitor 线程缓存一份 joints 到 self.current_joints
-                    # 但这里简化处理，直接读
                     curr = list(self.rc.get_ur5_angles())
                     curr[idx] = rad
                     self.rc.set_ur5_angles(tuple(curr))
                 else:
                     self.rc.set_turntable_angle(rad)
-            except Exception as e:
-                logging.warning(f"指令发送失败: {e}")
+            except Exception:
+                pass
             finally:
                 self.zmq_mutex.unlock()
 
@@ -134,96 +178,180 @@ class RobotWindowSlots:
         self.sliders[idx].blockSignals(False)
         self._send_joint_command(idx, val)
 
-    # --- 监控更新 (UI线程) ---
+    # --- 3. 数据刷新 (含滤波) ---
     def update_data(self, data):
-        # 更新波形图
-        joints = list(data['joints']) + [data['table']]
+        """处理来自 Worker 的数据信号"""
+        # 1. 获取原始数据
+        # data['joints'] 是 tuple, data['table'] 是 float
+        raw_joints = list(data['joints']) + [data['table']]
+        raw_deg = [math.degrees(x) for x in raw_joints]
+
+        # 2. 初始化滤波状态 (如果是第一次运行)
+        if not hasattr(self, 'filtered_joints'):
+            self.filtered_joints = raw_deg
+
+        # 3. 执行滤波 (EWMA 算法)
+        alpha = 0.2  # 滤波系数 (0.1~0.3)，越小越平滑，延迟越高
+
+        # 创建一个临时列表来存储当前帧的滤波结果
+        current_filtered_deg = []
+
+        for i in range(7):
+            # 公式: new = alpha * raw + (1-alpha) * old
+            filtered_val = alpha * raw_deg[i] + (1 - alpha) * self.filtered_joints[i]
+
+            # 死区控制 (Deadzone): 如果变化极其微小(<0.02度)，则保持原值，彻底消除静止时的抖动
+            if abs(filtered_val - self.filtered_joints[i]) < 0.01:
+                filtered_val = self.filtered_joints[i]
+
+            # 更新状态
+            self.filtered_joints[i] = filtered_val
+            current_filtered_deg.append(filtered_val)
+
+        # === 关键修正：定义 filtered_deg 变量，供后续使用 ===
+        filtered_deg = current_filtered_deg
+
+        # 4. 更新波形图 (使用滤波后的数据)
         self.plot_data = np.roll(self.plot_data, -1, axis=1)
         for i in range(7):
-            self.plot_data[i, -1] = math.degrees(joints[i])
+            self.plot_data[i, -1] = filtered_deg[i]
             self.curves[i].setData(self.plot_data[i])
 
-        # 更新滑条 (仅当用户未操作时)
+        # 5. 更新滑条 (若用户未拖动)
+        # 这里的 filtered_deg[i] 现在肯定已经定义了，不会报错
         if not any(s.isSliderDown() for s in self.sliders):
             self.programmatic_update = True
             for i in range(7):
-                deg = math.degrees(joints[i])
-                self.sliders[i].setValue(int(deg * 100))
-                self.spinboxes[i].setValue(deg)
+                val = filtered_deg[i]
+                # 更新 Slider (整数)
+                self.sliders[i].setValue(int(val * 100))
+                # 更新 SpinBox (浮点数)
+                self.spinboxes[i].setValue(val)
             self.programmatic_update = False
 
-        # 轨迹线刷新
+        # 6. 刷新轨迹 (需要短暂锁)
         if self.chk_show_traj.isChecked():
-            # 注意：update_trail 内部也调用了 sim.getPose，需要锁吗？
-            # 实际上 MonitorThread 已经在 lock 内完成了数据读取，
-            # 但 RobotPath.update_trail 是在 backend 再次读取。
-            # 最佳实践：MonitorThread 把 tip_pos 传出来，RobotPath 只负责画
-            # 临时方案：加锁调用
             if self.zmq_mutex.tryLock(5):
                 try:
                     self.path.update_trail()
+                except:
+                    pass
                 finally:
                     self.zmq_mutex.unlock()
 
-    # --- IK 与 视点 (加锁保护) ---
-    def on_ik_move_to_selected(self):
+    # --- 4. 智能运动 (AutoScanner Logic) ---
+    def run_scan_worker(self, viewpoints_info):
+        """
+        通用启动函数
+        :param viewpoints_info: list of (row_index, handle)
+        """
         if not self.rc: return
 
-        items = self.vp_table.selectedItems()
-        if not items: return
+        # 1. 禁用按钮，防止重复操作
+        self.btn_ik_move.setEnabled(False)  # 单步按钮
+        self.btn_full_scan.setEnabled(False)  # 全扫按钮
+        self.btn_stop_scan.setEnabled(True)  # 停止按钮可用
+        self.vp_table.setEnabled(False)
 
-        handle = int(self.vp_table.item(items[0].row(), 0).text())
+        # 2. 实例化 Worker
+        # 必须传入 self.zmq_mutex，因为 Worker 内部要操作 ZMQ
+        self.scan_worker = AutoScanWorker(self.rc, self.ik, self.path, viewpoints_info, self.zmq_mutex)
 
-        self.zmq_mutex.lock()
-        try:
-            target_pos = self.rc.get_handle_position(handle)
-            target_quat = self.rc.get_handle_quaternion(handle)
-            solution = self.ik.solve(target_pos, target_quat, ref_frame=Frames.WORLD)
+        # 3. 连接信号
+        self.scan_worker.progress_signal.connect(self.on_scan_progress)
+        self.scan_worker.log_signal.connect(self.on_scan_log)
+        self.scan_worker.finished_signal.connect(self.on_scan_finished)
 
-            if solution:
-                self.rc.set_ur5_angles(solution)
-                logging.info("IK 移动执行成功")
-            else:
-                QMessageBox.warning(self, "IK 失败", "目标不可达")
-        except Exception as e:
-            logging.error(f"IK Error: {e}")
-        finally:
-            self.zmq_mutex.unlock()
+        # 4. 启动
+        self.scan_worker.start()
 
-    # (其余函数如 on_create_manual_dummy, on_load_vp_file, on_export_matplotlib 保持逻辑不变，
-    # 但凡涉及 self.rc 的调用，建议都加上 self.zmq_mutex.lock() / unlock())
+    def on_ik_move_smart(self):
+        """点击‘单步移动’时触发"""
+        sel = self.vp_table.selectedItems()
+        if not sel:
+            QMessageBox.information(self, "提示", "请先在表格中选择一行视点。")
+            return
 
+        row = sel[0].row()
+        item = self.vp_table.item(row, 0)
+        handle = int(item.text())
+
+        logging.info(f"启动单步移动任务: Row {row}, Handle {handle}")
+
+        # 构造只包含一个点的列表，传给通用 Worker
+        self.run_scan_worker([(row, handle)])
+
+    def on_start_full_scan(self):
+        """点击‘开始全扫’时触发"""
+        row_count = self.vp_table.rowCount()
+        if row_count == 0:
+            QMessageBox.information(self, "提示", "视点列表为空。")
+            return
+
+        logging.info("启动全自动扫描任务...")
+
+        # 构造包含所有点的列表
+        viewpoints_info = []
+        for row in range(row_count):
+            handle = int(self.vp_table.item(row, 0).text())
+            viewpoints_info.append((row, handle))
+
+        self.run_scan_worker(viewpoints_info)
+
+    # --- 按钮事件 3: 停止 ---
+    def on_stop_full_scan(self):
+        if hasattr(self, 'scan_worker') and self.scan_worker.isRunning():
+            logging.warning("正在请求停止任务...")
+            self.scan_worker.stop()
+            # 按钮状态会在 finished 信号中恢复
+
+    # --- 辅助功能 ---
     def on_create_manual_dummy(self):
-        if not self.rc: return
-        text = self.input_vp_pos.text()
         try:
-            pos = [float(x) for x in text.split(',')]
+            val = self.input_vp_pos.text()
+            parts = [float(x) for x in val.split(',')]
+
             self.zmq_mutex.lock()
             try:
                 h = self.rc.sim.createDummy(0.05)
-                self.rc.sim.setObjectPosition(h, -1, pos)
+                self.rc.sim.setObjectPosition(h, -1, parts)
                 self.rc.sim.setObjectAlias(h, "Manual_Pt")
 
                 row = self.vp_table.rowCount()
                 self.vp_table.insertRow(row)
                 self.vp_table.setItem(row, 0, QTableWidgetItem(str(h)))
-                self.vp_table.setItem(row, 1, QTableWidgetItem("Manual_Pt"))
-                self.vp_table.setItem(row, 2, QTableWidgetItem(str(pos)))
+                self.vp_table.setItem(row, 1, QTableWidgetItem("Manual"))
+                self.vp_table.setItem(row, 2, QTableWidgetItem(str(parts)))
             finally:
                 self.zmq_mutex.unlock()
-        except Exception as e:
-            logging.error(str(e))
+        except:
+            pass
 
-    def on_toggle_traj(self, checked):
-        if not self.rc: return
+    def on_load_vp_file(self):
+        fname, _ = QFileDialog.getOpenFileName(self, "Load Viewpoints", "", "Text Files (*.txt)")
+        if not fname: return
+
         self.zmq_mutex.lock()
         try:
-            if checked:
-                self.path.init_trail()
-            else:
-                self.path.clear_trail()
+            self.path.load_viewpoints_from_txt(fname)
+            self.path.create_visuals()
+
+            self.vp_table.setRowCount(0)
+            for vp in self.path.viewpoints:
+                row = self.vp_table.rowCount()
+                self.vp_table.insertRow(row)
+                self.vp_table.setItem(row, 0, QTableWidgetItem(str(vp.handle)))
+                self.vp_table.setItem(row, 1, QTableWidgetItem(vp.name))
+                self.vp_table.setItem(row, 2, QTableWidgetItem("Loaded"))
+        except Exception as e:
+            logging.error(str(e))
         finally:
             self.zmq_mutex.unlock()
+
+    def on_toggle_traj(self, checked):
+        self.monitor_thread.recording_traj = checked
+        if not checked:
+            self.on_clear_traj()
 
     def on_clear_traj(self):
         self.monitor_thread.clear_trajectory()
@@ -231,98 +359,55 @@ class RobotWindowSlots:
             self.zmq_mutex.lock()
             try:
                 self.path.clear_trail()
-                self.path.init_trail()
             finally:
                 self.zmq_mutex.unlock()
 
-    # --- 业务逻辑续 (Matplotlib & 文件加载) ---
     def on_export_matplotlib(self):
-        """导出学术风格3D轨迹图"""
-        points = self.monitor_thread.trajectory_points
-        if not points:
-            QMessageBox.warning(self, "无数据", "没有记录到轨迹点，请先连接并运行机器人。")
-            return
+        # 简单导出示例
+        pts = list(self.monitor_thread.trajectory_points)
+        if not pts: return
+        data = np.array(pts)
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.plot(data[:, 0], data[:, 1], data[:, 2])
+        plt.show()
 
-        try:
-            data = np.array(points)  # N x 3
-
-            fig = plt.figure(figsize=(10, 8))
-            ax = fig.add_subplot(111, projection='3d')
-
-            # 绘制轨迹
-            ax.plot(data[:, 0], data[:, 1], data[:, 2], label='End-Effector Trajectory', linewidth=1.5, color='#0072BD')
-
-            # 绘制起点和终点
-            ax.scatter(data[0, 0], data[0, 1], data[0, 2], c='green', marker='o', label='Start')
-            ax.scatter(data[-1, 0], data[-1, 1], data[-1, 2], c='red', marker='x', label='End')
-
-            # 学术风格设置
-            ax.set_xlabel('X [m]', fontsize=12)
-            ax.set_ylabel('Y [m]', fontsize=12)
-            ax.set_zlabel('Z [m]', fontsize=12)
-            ax.set_title('Robot End-Effector Trajectory', fontsize=14, fontweight='bold')
-            ax.grid(True, linestyle='--', alpha=0.6)
-            ax.legend()
-
-            # 自动调整视角
-            ax.view_init(elev=25., azim=-45)
-            plt.show()
-            logging.info(f"轨迹图已生成，包含 {len(data)} 个采样点。")
-
-        except Exception as e:
-            logging.error(f"绘图失败: {e}")
-
-    def on_load_vp_file(self):
-        """从TXT文件加载视点"""
-        if not self.rc:
-            QMessageBox.warning(self, "未连接", "请先连接仿真软件。")
-            return
-
-        path, _ = QFileDialog.getOpenFileName(self, "选择视点文件", "", "Text Files (*.txt)")
-        if not path: return
+    def close_app_cleanup(self):
+        """窗口关闭时的清理"""
+        if hasattr(self, 'monitor_thread'):
+            self.monitor_thread.stop()
+            self.monitor_thread.wait()
 
         self.zmq_mutex.lock()
         try:
-            # 使用后端加载
-            self.path.load_viewpoints_from_txt(path)
-            self.path.create_visuals()
-
-            # 刷新表格
-            self.vp_table.setRowCount(0)
-            for vp in self.path.viewpoints:
-                row = self.vp_table.rowCount()
-                self.vp_table.insertRow(row)
-                # Column 0: Handle ID
-                self.vp_table.setItem(row, 0, QTableWidgetItem(str(vp.handle)))
-                # Column 1: Name
-                self.vp_table.setItem(row, 1, QTableWidgetItem(vp.name))
-
-                # Column 2: Position (获取实际生成的坐标)
-                # 注意：RobotPath 中已经设置了 pose，这里直接读 backend 缓存或再查一次 sim 都可以
-                # 为稳妥起见，读取 backend 的 local_matrix 转换后的值会更快，但这里演示查 sim
-                pos = self.rc.get_handle_position(vp.handle)
-                pos_str = f"[{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}]"
-                self.vp_table.setItem(row, 2, QTableWidgetItem(pos_str))
-
-            logging.info(f"成功加载文件: {path}, 共 {len(self.path.viewpoints)} 个视点")
-
-        except Exception as e:
-            logging.error(f"加载文件失败: {e}")
+            if hasattr(self, 'rc') and self.rc:
+                self.rc.stop()
+        except:
+            pass
         finally:
             self.zmq_mutex.unlock()
 
-    def close_app_cleanup(self):
-        """退出前的清理"""
-        logging.info("正在停止服务...")
-        if self.monitor_thread.isRunning():
-            self.monitor_thread.stop()
+    # --- Worker 回调函数 ---
+    def on_scan_progress(self, row_index):
+        """Worker 通知进度，高亮表格"""
+        self.vp_table.selectRow(row_index)
+        self.vp_table.scrollToItem(self.vp_table.item(row_index, 0))
 
-        # 最后的 ZMQ 操作
-        self.zmq_mutex.lock()
-        if self.rc:
-            try:
-                self.rc.stop()
-                self.rc.close()
-            except:
-                pass
-        self.zmq_mutex.unlock()
+    def on_scan_log(self, msg, level):
+        """Worker 发送日志"""
+        if level == "SUCCESS":
+            logging.info(f"✅ {msg}")
+        elif level == "WARNING":
+            logging.warning(msg)
+        elif level == "ERROR":
+            logging.error(msg)
+        else:
+            logging.info(msg)
+
+    def on_scan_finished(self):
+        """任务结束恢复 UI"""
+        self.btn_ik_move.setEnabled(True)
+        self.btn_full_scan.setEnabled(True)
+        self.btn_stop_scan.setEnabled(False)
+        self.vp_table.setEnabled(True)
+        logging.info("任务线程已退出。")

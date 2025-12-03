@@ -1,18 +1,15 @@
-# scan_qt/test/robot_path.py
 import numpy as np
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Any
+from scipy.spatial.transform import Rotation as R  # 必须引入这个
 from scan_qt.test.robot_comm import Frames
-from scipy.spatial.transform import Rotation as R
 
 
 @dataclass
 class ViewPointData:
     id: int
     name: str
-    # 核心数据：相对于 Receiver 的局部变换矩阵 (4x4)
     local_matrix: np.ndarray
-    # 句柄：对应场景中的 Dummy
     handle: int = -1
 
 
@@ -21,16 +18,15 @@ class RobotPath:
         self.rc = rc
         self.sim = rc.sim
         self.viewpoints: List[ViewPointData] = []
-
-        # 视觉容器
         self.viz_container = -1
         self.trail_handle = -1
 
     def load_viewpoints_from_txt(self, filepath: str):
-        """解析TXT，构建局部矩阵"""
+        """解析TXT，使用 Scipy 构建稳健的局部矩阵，防止 ZMQ 崩溃"""
         self.viewpoints.clear()
-        # 清理旧的 dummy
         self.clear_visuals()
+
+        print(f"[Path] Loading viewpoints from: {filepath}")
 
         with open(filepath, 'r') as f:
             for line in f:
@@ -43,18 +39,47 @@ class RobotPath:
                     pos = np.array([float(parts[2]), float(parts[3]), float(parts[4])]) / 1000.0
                     n_vec = np.array([float(parts[5]), float(parts[6]), float(parts[7])])
 
-                    # 构建局部矩阵 T_obj_vp
-                    R = self._calc_rotation_matrix_from_dir(n_vec)
+                    # --- 【关键修复】构建无奇异点的旋转矩阵 ---
+
+                    # 1. 归一化法线 (作为 Z 轴)
+                    norm = np.linalg.norm(n_vec)
+                    if norm < 1e-6:
+                        # 防止零向量导致的 NaN
+                        z_axis = np.array([0, 0, 1])
+                    else:
+                        z_axis = n_vec / norm
+
+                    # 2. 动态选择辅助轴 (Up Vector)
+                    # 如果 Z 轴太接近世界 Z (0,0,1)，强制改用 Y 轴做辅助，防止 Cross Product 为 0
+                    if np.allclose(np.abs(z_axis), [0, 0, 1], atol=1e-2):
+                        up = np.array([0, 1, 0])
+                    else:
+                        up = np.array([0, 0, 1])
+
+                    # 3. 计算 X 和 Y
+                    x_axis = np.cross(up, z_axis)
+                    x_axis /= np.linalg.norm(x_axis)  # 归一化
+                    y_axis = np.cross(z_axis, x_axis)  # 不需要归一化，因为 Z 和 X 正交且单位化
+
+                    # 4. 构建旋转矩阵 (列向量)
+                    rot_mat = np.column_stack((x_axis, y_axis, z_axis))
+
+                    # 5. 构建 4x4 变换矩阵
                     T = np.eye(4)
-                    T[:3, :3] = R
+                    T[:3, :3] = rot_mat
                     T[:3, 3] = pos
 
+                    # 6. 安全检查：确保没有 NaN
+                    if np.isnan(T).any():
+                        print(f"[Path] ⚠️ 警告: ID {vp_id} 计算产生 NaN，已跳过。")
+                        continue
+
                     self.viewpoints.append(ViewPointData(id=vp_id, name=name, local_matrix=T))
+
                 except Exception as e:
-                    print(f"[Path] Parse error: {e}")
+                    print(f"[Path] Parse error at ID {parts[0]}: {e}")
 
     def create_visuals(self):
-        """基于当前 Receiver 的位置，初始化 Dummy"""
         if self.viz_container == -1:
             self.viz_container = self.sim.createDummy(0.01)
             self.sim.setObjectAlias(self.viz_container, "VP_Container")
@@ -63,60 +88,65 @@ class RobotPath:
             vp.handle = self.sim.createDummy(0.02)
             self.sim.setObjectAlias(vp.handle, f"VP_{vp.name}")
             self.sim.setObjectParent(vp.handle, self.viz_container, True)
-            self.sim.setObjectColor(vp.handle, 0, self.sim.colorcomponent_ambient_diffuse, [0, 0, 1])  # 蓝色
+            # 初始设为蓝色
+            self.sim.setObjectColor(vp.handle, 0, self.sim.colorcomponent_ambient_diffuse, [0, 0, 1])
 
-        # 立即刷新一次位置
         self.update_all_dummies_pose()
 
     def update_all_dummies_pose(self):
-        """
-        核心能力：根据 Receiver 当前的世界姿态，更新所有 Dummy 的位置。
-        当转台转动时，必须调用此函数，Dummy 才会跟着转。
-        """
-        # 1. 获取 Receiver 当前世界矩阵
+        """更新所有 Dummy 的位置，并进行 NaN 检查"""
+        # 获取 Receiver 当前世界矩阵
         mat_list = self.sim.getObjectMatrix(self.rc.handles.receiver, self.rc.handles.world)
         T_world_obj = self._sim_matrix_to_numpy(mat_list)
 
-        # 2. 遍历更新
         for vp in self.viewpoints:
             if vp.handle != -1:
-                # T_world_vp = T_world_obj * T_obj_vp
+                # 矩阵乘法 T_final = T_receiver * T_local
                 T_final = T_world_obj @ vp.local_matrix
 
-                # 提取位置和四元数设置给 Dummy
+                # 提取位置
                 pos = T_final[:3, 3].tolist()
-                quat = self._matrix_to_quat(T_final[:3, :3])
 
-                self.sim.setObjectPose(vp.handle, self.rc.handles.world, pos + list(quat))
+                # --- 【关键修复】使用 Scipy 提取四元数 ---
+                r = R.from_matrix(T_final[:3, :3])
+                quat = r.as_quat().tolist()  # [x, y, z, w]
 
-    def get_vp_world_pose(self, index: int) -> tuple[Any, tuple[
-                                                              float | Any, float | Any, float | Any, float | Any] | Any] | \
-                                               tuple[None, None]:
-        """获取指定视点当前的实时世界坐标 (Pos, Quat)"""
+                # 双重保险：检查是否有 NaN
+                if any(np.isnan(pos)) or any(np.isnan(quat)):
+                    print(f"[Path] Error: NaN detected for VP {vp.id}. Skipping update to prevent crash.")
+                    continue
+
+                self.sim.setObjectPose(vp.handle, self.rc.handles.world, pos + quat)
+
+    def get_vp_world_pose(self, index: int):
         if 0 <= index < len(self.viewpoints):
             vp = self.viewpoints[index]
-            # 重新计算以保证最新
             mat_list = self.sim.getObjectMatrix(self.rc.handles.receiver, self.rc.handles.world)
             T_world_obj = self._sim_matrix_to_numpy(mat_list)
             T_final = T_world_obj @ vp.local_matrix
 
             pos = T_final[:3, 3].tolist()
-            quat_np = self._matrix_to_quat(T_final[:3, :3])
 
-            if isinstance(quat_np, np.ndarray):
-                quat = quat_np.tolist()
-            else:
-                quat = quat_np
+            # --- 使用 Scipy 提取四元数 ---
+            r = R.from_matrix(T_final[:3, :3])
+            quat = r.as_quat().tolist()
+
+            # 检查 NaN
+            if any(np.isnan(pos)) or any(np.isnan(quat)):
+                print(f"[Path] Error: NaN detected in get_vp_world_pose for VP {vp.id}")
+                return None, None
 
             return pos, quat
         return None, None
 
     def clear_visuals(self):
         if self.viz_container != -1:
-            self.sim.removeObject(self.viz_container)
+            try:
+                self.sim.removeObject(self.viz_container)
+            except:
+                pass
             self.viz_container = -1
 
-    # --- 轨迹相关 ---
     def init_trail(self):
         if self.trail_handle != -1:
             self.sim.removeDrawingObject(self.trail_handle)
@@ -129,41 +159,19 @@ class RobotPath:
             pos, _ = self.rc.get_pose(Frames.SCANNER, Frames.WORLD)
             self.sim.addDrawingObjectItem(self.trail_handle, list(pos))
 
-    # --- 数学工具 ---
+    def clear_trail(self):
+        if self.trail_handle != -1:
+            try:
+                self.sim.removeDrawingObject(self.trail_handle)
+            except:
+                pass
+            self.trail_handle = -1
+
+    def clear_all(self):
+        self.clear_trail()
+        self.clear_visuals()
+
     @staticmethod
     def _sim_matrix_to_numpy(m_list):
         m = np.array(m_list).reshape(3, 4)
         return np.vstack([m, [0, 0, 0, 1]])
-
-    @staticmethod
-    def _calc_rotation_matrix_from_dir(direction):
-        z = direction / np.linalg.norm(direction)
-        up = np.array([0, 0, 1]) if abs(z[2]) < 0.99 else np.array([0, 1, 0])
-        x = np.cross(up, z)
-        x /= np.linalg.norm(x)
-        y = np.cross(z, x)
-        return np.column_stack((x, y, z))
-
-    @staticmethod
-    def _matrix_to_quat(mat3x3):
-        # 使用 SciPy 极其稳定
-        r = R.from_matrix(mat3x3)
-        # CoppeliaSim 顺序通常是 [x, y, z, w]
-        return r.as_quat()
-
-    def clear_trail(self):
-        """清除场景中的红色轨迹线"""
-        if self.trail_handle != -1:
-            try:
-                self.sim.removeDrawingObject(self.trail_handle)
-                print("[Path] Trail cleared.")
-            except Exception as e:
-                print(f"[Path] Warning: Failed to clear trail. {e}")
-            finally:
-                # 无论成功失败，重置句柄，防止二次删除报错
-                self.trail_handle = -1
-
-    def clear_all(self):
-        """一键清除所有视觉元素（轨迹 + Dummy）"""
-        self.clear_trail()
-        self.clear_visuals()
