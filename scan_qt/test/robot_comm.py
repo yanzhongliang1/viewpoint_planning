@@ -32,7 +32,6 @@ class RobotComm:
         self.client = RemoteAPIClient(host=host, port=port)
         self.sim = self.client.require("sim")
         self.simIK = self.client.require("simIK")
-        print(f"ZMQ Client ID: {id(self.client)}")
 
         # 2. 初始化句柄 (全部作为成员属性)
         self.handles = self._init_handles()
