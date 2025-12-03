@@ -3,6 +3,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Any
 from scan_qt.test.robot_comm import Frames
+from scipy.spatial.transform import Rotation as R
 
 
 @dataclass
@@ -144,35 +145,11 @@ class RobotPath:
         return np.column_stack((x, y, z))
 
     @staticmethod
-    def _matrix_to_quat(R):
-        # 简化的矩阵转四元数 (需确保正确实现，此处略写为占位，建议使用 scipy.spatial.transform 或完整实现)
-        # 为了完整性，这里提供一个简单的实现
-        tr = np.trace(R)
-        if tr > 0:
-            S = np.sqrt(tr + 1.0) * 2
-            qw = 0.25 * S
-            qx = (R[2, 1] - R[1, 2]) / S
-            qy = (R[0, 2] - R[2, 0]) / S
-            qz = (R[1, 0] - R[0, 1]) / S
-        elif (R[0, 0] > R[1, 1]) & (R[0, 0] > R[2, 2]):
-            S = np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2]) * 2
-            qw = (R[2, 1] - R[1, 2]) / S
-            qx = 0.25 * S
-            qy = (R[0, 1] + R[1, 0]) / S
-            qz = (R[0, 2] + R[2, 0]) / S
-        elif R[1, 1] > R[2, 2]:
-            S = np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2]) * 2
-            qw = (R[0, 2] - R[2, 0]) / S
-            qx = (R[0, 1] + R[1, 0]) / S
-            qy = 0.25 * S
-            qz = (R[1, 2] + R[2, 1]) / S
-        else:
-            S = np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2
-            qw = (R[1, 0] - R[0, 1]) / S
-            qx = (R[0, 2] + R[2, 0]) / S
-            qy = (R[1, 2] + R[2, 1]) / S
-            qz = 0.25 * S
-        return qx, qy, qz, qw
+    def _matrix_to_quat(mat3x3):
+        # 使用 SciPy 极其稳定
+        r = R.from_matrix(mat3x3)
+        # CoppeliaSim 顺序通常是 [x, y, z, w]
+        return r.as_quat()
 
     def clear_trail(self):
         """清除场景中的红色轨迹线"""

@@ -30,11 +30,8 @@ class RobotComm:
 
         # 1. 连接 API
         self.client = RemoteAPIClient(host=host, port=port)
-        print("[RobotComm] Client object created. Handshaking...")  # 新增
         self.sim = self.client.require("sim")
-        print("[RobotComm] sim Connection successful!")  # 新增
         self.simIK = self.client.require("simIK")
-        print("[RobotComm] simIK Connection successful!")  # 新增
 
         # 2. 初始化句柄 (全部作为成员属性)
         self.handles = self._init_handles()
@@ -92,7 +89,7 @@ class RobotComm:
     # 2. 机器人与转台控制 (Motion Control)
     # ---------------------------------------------------------
 
-    def  set_ur5_angles(self, angles: Tuple[float, ...], instant: bool = False):
+    def set_ur5_angles(self, angles: Tuple[float, ...], instant: bool = False):
         """
         设置 UR5 6个关节角度。
         :param instant: False(默认)=物理驱动(Dynamics), True=强制瞬移(Kinematics)
@@ -167,6 +164,9 @@ class RobotComm:
         """
         ref = relative_to_handle if relative_to_handle is not None else self.sim.handle_world
         return self.sim.getObjectOrientation(handle, ref)
+
+    def get_sim_time(self):
+        return self.sim.getSimulationTime()
 
     def close(self):
         pass  # ZMQ Client 自动管理资源
