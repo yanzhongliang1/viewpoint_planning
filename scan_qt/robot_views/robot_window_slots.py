@@ -12,7 +12,7 @@ from PyQt5.QtCore import QMutex
 from scan_qt.test.robot_comm import RobotComm, Frames
 from scan_qt.test.robot_ik import RobotIK
 from scan_qt.test.robot_path import RobotPath
-from scan_qt.robot_views.robot_workers import AutoScanWorker
+from scan_qt.robot_views.robot_workers import SmartScanWorker
 
 
 class RobotWindowSlots:
@@ -240,70 +240,69 @@ class RobotWindowSlots:
                     self.zmq_mutex.unlock()
 
     # --- 4. 智能运动 (AutoScanner Logic) ---
-    def run_scan_worker(self, viewpoints_info):
-        """
-        通用启动函数
-        :param viewpoints_info: list of (row_index, handle)
-        """
+    def on_ik_move_smart(self):
+        """单步移动：复刻 robot_controller.py 逻辑，通过 Worker 执行"""
         if not self.rc: return
 
-        # 1. 禁用按钮，防止重复操作
-        self.btn_ik_move.setEnabled(False)  # 单步按钮
-        self.btn_full_scan.setEnabled(False)  # 全扫按钮
-        self.btn_stop_scan.setEnabled(True)  # 停止按钮可用
-        self.vp_table.setEnabled(False)
-
-        # 2. 实例化 Worker
-        # 必须传入 self.zmq_mutex，因为 Worker 内部要操作 ZMQ
-        self.scan_worker = AutoScanWorker(self.rc, self.ik, self.path, viewpoints_info, self.zmq_mutex)
-
-        # 3. 连接信号
-        self.scan_worker.progress_signal.connect(self.on_scan_progress)
-        self.scan_worker.log_signal.connect(self.on_scan_log)
-        self.scan_worker.finished_signal.connect(self.on_scan_finished)
-
-        # 4. 启动
-        self.scan_worker.start()
-
-    def on_ik_move_smart(self):
-        """点击‘单步移动’时触发"""
+        # 获取选中的行
         sel = self.vp_table.selectedItems()
         if not sel:
-            QMessageBox.information(self, "提示", "请先在表格中选择一行视点。")
+            QMessageBox.information(self, "提示", "请选择一个视点。")
             return
 
         row = sel[0].row()
-        item = self.vp_table.item(row, 0)
-        handle = int(item.text())
+        handle = int(self.vp_table.item(row, 0).text())
 
-        logging.info(f"启动单步移动任务: Row {row}, Handle {handle}")
+        # 这里的 handle_list 只包含一个元素
+        handle_list = [handle]
 
-        # 构造只包含一个点的列表，传给通用 Worker
-        self.run_scan_worker([(row, handle)])
+        self.start_scan_worker(handle_list)
 
     def on_start_full_scan(self):
-        """点击‘开始全扫’时触发"""
+        """全自动扫描：处理所有列表中的点"""
+        if not self.rc: return
+
         row_count = self.vp_table.rowCount()
         if row_count == 0:
-            QMessageBox.information(self, "提示", "视点列表为空。")
+            QMessageBox.information(self, "提示", "列表为空。")
             return
 
-        logging.info("启动全自动扫描任务...")
-
-        # 构造包含所有点的列表
-        viewpoints_info = []
+        handle_list = []
         for row in range(row_count):
-            handle = int(self.vp_table.item(row, 0).text())
-            viewpoints_info.append((row, handle))
+            item = self.vp_table.item(row, 0)
+            handle_list.append(int(item.text()))
 
-        self.run_scan_worker(viewpoints_info)
+        self.start_scan_worker(handle_list)
 
-    # --- 按钮事件 3: 停止 ---
+    # 3. 统一的 Worker 启动函数 (新增)
+    def start_scan_worker(self, handle_list):
+        # 界面互斥：禁止重复点击
+        self.btn_ik_move.setEnabled(False)
+        self.btn_full_scan.setEnabled(False)
+        self.btn_stop_scan.setEnabled(True)
+        self.vp_table.setEnabled(False)
+
+        # 实例化 Worker
+        self.scan_worker = SmartScanWorker(
+            self.rc,
+            self.ik,
+            self.path,
+            handle_list,
+            self.zmq_mutex
+        )
+
+        # 连接信号
+        self.scan_worker.progress_signal.connect(self.on_scan_progress)  # 复用之前的进度高亮
+        self.scan_worker.log_signal.connect(self.on_scan_log)  # 复用之前的日志
+        self.scan_worker.finished_signal.connect(self.on_scan_finished)  # 复用之前的结束清理
+
+        self.scan_worker.start()
+
+    # 4. 停止按钮 (保持不变)
     def on_stop_full_scan(self):
         if hasattr(self, 'scan_worker') and self.scan_worker.isRunning():
-            logging.warning("正在请求停止任务...")
+            logging.warning("正在停止任务...")
             self.scan_worker.stop()
-            # 按钮状态会在 finished 信号中恢复
 
     # --- 辅助功能 ---
     def on_create_manual_dummy(self):
