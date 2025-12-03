@@ -218,7 +218,7 @@ class MainWindowSlots(QObject):
         if row < 0: return
         win.camera_controller.remove_view(row)
         self.refresh_view_table()
-        win.log(f"已删除视点 ID: {row}", "WARNING")
+        self.win.logger.log(f"已删除视点 ID: {row}", "WARNING")
 
     def on_grab_camera_clicked(self):
         win = self.win
@@ -232,7 +232,7 @@ class MainWindowSlots(QObject):
         win.spin_cam_dirx.setValue(cam.direction[0])
         win.spin_cam_diry.setValue(cam.direction[1])
         win.spin_cam_dirz.setValue(cam.direction[2])
-        win.log("已同步 3D 视图相机参数至 UI。", "INFO")
+        self.win.logger.log("已同步 3D 视图相机参数至 UI。", "INFO")
 
     def on_view_table_double_clicked(self, item):
         win = self.win
@@ -241,7 +241,7 @@ class MainWindowSlots(QObject):
 
         # 顺便更新 UI 参数
         self.on_grab_camera_clicked()
-        win.log(f"相机跳转至视点 ID: {row}", "INFO")
+        self.win.logger.log(f"相机跳转至视点 ID: {row}", "INFO")
 
     def on_save_views_clicked(self):
         filename, _ = QFileDialog.getSaveFileName(self.win, "保存视点列表", "", "Text (*.txt)")
@@ -285,7 +285,7 @@ class MainWindowSlots(QObject):
             win.nbv_controller.mode = "surface"
 
         win.nbv_controller.coverage = None
-        win.log(f"NBV 模式切换为: {win.nbv_controller.mode} (覆盖网格已重置)", "INFO")
+        self.win.logger.log(f"NBV 模式切换为: {win.nbv_controller.mode} (覆盖网格已重置)", "INFO")
 
     def on_nbv_params_changed(self, *args):
         win = self.win
@@ -295,7 +295,7 @@ class MainWindowSlots(QObject):
         win.nbv_controller.voxel_size = float(voxel)
         win.nbv_controller.num_candidates = int(num_cand)
         win.nbv_controller.coverage = None  # 重置
-        win.log("NBV 参数更新 (Voxel/Count)，覆盖网格已重置。", "INFO")
+        self.win.logger.log("NBV 参数更新 (Voxel/Count)，覆盖网格已重置。", "INFO")
 
     def on_nbv_next_clicked(self):
         self.win.logger.log("正在计算下一最佳视点 (NBV)...", "INFO")
