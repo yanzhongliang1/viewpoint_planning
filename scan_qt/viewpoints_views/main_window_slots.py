@@ -1,3 +1,4 @@
+# scan_qt/viewpoints_views/main_window_slots.py
 import os
 import numpy as np
 
