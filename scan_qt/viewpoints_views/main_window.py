@@ -480,8 +480,6 @@ class MainWindow(QMainWindow):
         sp.setSingleStep(step)
         sp.setDecimals(decimals)
         sp.setButtonSymbols(QSpinBox.NoButtons)  # 隐藏上下小箭头，更简洁
-        sp.setStyleSheet(
-            "background: #252525; color: #eee; border: 1px solid #444; border-radius: 2px; padding-left: 4px;")
         sp.setFixedHeight(22)
         return sp
 

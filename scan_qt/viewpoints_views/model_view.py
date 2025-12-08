@@ -40,7 +40,7 @@ class ModelView:
             )
             # 设置一些基础渲染选项
             opt = self.vis.get_render_option()
-            opt.background_color = np.asarray([0.12, 0.12, 0.12])
+            opt.background_color = np.asarray([0.9, 0.9, 0.9]) # 0.12
             opt.point_size = 2.0
 
     def setup_embedded_window(self, parent_widget):
