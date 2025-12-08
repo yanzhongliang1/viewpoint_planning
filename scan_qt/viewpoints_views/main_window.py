@@ -1,3 +1,4 @@
+# scan_qt\viewpoints_views\main_window.py
 import sys
 import numpy as np
 from PyQt5.QtWidgets import (
