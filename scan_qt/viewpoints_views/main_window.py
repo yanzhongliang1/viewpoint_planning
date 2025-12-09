@@ -5,10 +5,10 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QPushButton, QLabel, QGroupBox, QCheckBox, QSpinBox, QDoubleSpinBox,
     QComboBox, QTableWidget, QTableWidgetItem, QSplitter, QTextEdit,
-    QTabWidget, QScrollArea, QHeaderView, QFrame, QSizePolicy
+    QTabWidget, QScrollArea, QHeaderView, QFrame, QSizePolicy, QShortcut
 )
 from PyQt5.QtCore import Qt, QTimer, QSize
-from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtGui import QIcon, QFont, QKeySequence
 
 from scan_qt.models.model_model import ModelModel
 from scan_qt.viewpoints_views.model_view import ModelView
@@ -202,6 +202,26 @@ class MainWindow(QMainWindow):
         tab_scan = QWidget()
         s_layout = QVBoxLayout(tab_scan)
 
+        # Tab 2: 相机与扫描
+        tab_scan = QWidget()
+        s_layout = QVBoxLayout(tab_scan)
+
+        # --- 新增：表面交互工具 ---
+        g_interact = QGroupBox("表面交互")
+        l_interact = QVBoxLayout(g_interact)
+
+        self.btn_pick_center = QPushButton("① 拾取中心点 (P)")
+        self.btn_pick_center.setToolTip("在屏幕中心发射射线，拾取物体表面的点和法向")
+        self.btn_pick_center.clicked.connect(self.slots.on_pick_center_clicked)
+
+        self.btn_align_normal = QPushButton("② 法向对齐视图 (Space)")
+        self.btn_align_normal.setToolTip("将相机移动到拾取点的法向正前方")
+        self.btn_align_normal.clicked.connect(self.slots.on_align_normal_clicked)
+
+        l_interact.addWidget(self.btn_pick_center)
+        l_interact.addWidget(self.btn_align_normal)
+        s_layout.addWidget(g_interact)
+
         # 1. 镜头参数
         g_lens = QGroupBox("镜头参数")
         fl_lens = QFormLayout(g_lens)
@@ -272,7 +292,18 @@ class MainWindow(QMainWindow):
         layout.addWidget(tabs)
 
         scroll.setWidget(container)
+        self._init_shortcuts()
         return scroll
+
+    def _init_shortcuts(self):
+        """注册全局快捷键"""
+        # P 键拾取
+        sc_pick = QShortcut(QKeySequence("P"), self)
+        sc_pick.activated.connect(self.slots.on_pick_center_clicked)
+
+        # 空格键对齐
+        sc_align = QShortcut(QKeySequence("Space"), self)
+        sc_align.activated.connect(self.slots.on_align_normal_clicked)
 
     def create_viewport(self):
         """中间：3D 视口容器"""

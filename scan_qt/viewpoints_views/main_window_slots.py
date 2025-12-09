@@ -221,6 +221,54 @@ class MainWindowSlots(QObject):
         self.refresh_view_table()
         self.win.logger.log(f"已删除视点 ID: {row}", "WARNING")
 
+    def on_pick_center_clicked(self):
+        self.win.camera_controller.pick_center_point()
+
+    def on_crosshair_toggled(self, checked: bool):
+        """切换准心显示状态"""
+        self.win.view.toggle_crosshair(checked)
+
+    def on_align_normal_clicked(self):
+        """法向对齐：计算对齐位姿 -> 更新 Model/View -> 刷新 UI"""
+        # 1. Controller 执行核心逻辑：
+        #    - 计算对齐位置
+        #    - 移动 Open3D 相机
+        #    - 更新 CameraModel (pos, dir, up)
+        self.win.camera_controller.align_camera_to_pick()
+
+        # 2. 将 CameraModel 的新数据刷新到 UI
+        self._sync_pose_ui_from_model()
+
+        # 3. (可选) 自动更新视锥预览，因为参数变了
+        # self.win.camera_controller.update_frustum()
+        # 注：align_camera_to_pick 内部如果已经调用了 update_frustum，这里就不用调
+
+        self.win.logger.log("视图已对齐表面法向，UI参数已同步。", "SUCCESS")
+
+    def _sync_pose_ui_from_model(self):
+        """从 CameraModel 读取位姿数据并更新到界面的 SpinBox"""
+        cam = self.win.camera_model
+
+        # 临时阻塞信号，防止更新 UI 时触发 valueChanged 导致死循环或不必要的计算
+        widgets = [
+            self.win.spin_cam_posx, self.win.spin_cam_posy, self.win.spin_cam_posz,
+            self.win.spin_cam_dirx, self.win.spin_cam_diry, self.win.spin_cam_dirz
+        ]
+        for w in widgets: w.blockSignals(True)
+
+        # 设置位置
+        self.win.spin_cam_posx.setValue(cam.position[0])
+        self.win.spin_cam_posy.setValue(cam.position[1])
+        self.win.spin_cam_posz.setValue(cam.position[2])
+
+        # 设置方向
+        self.win.spin_cam_dirx.setValue(cam.direction[0])
+        self.win.spin_cam_diry.setValue(cam.direction[1])
+        self.win.spin_cam_dirz.setValue(cam.direction[2])
+
+        # 恢复信号
+        for w in widgets: w.blockSignals(False)
+
     def on_grab_camera_clicked(self):
         win = self.win
         win.camera_controller.grab_pose_from_current_view()
@@ -233,6 +281,7 @@ class MainWindowSlots(QObject):
         win.spin_cam_dirx.setValue(cam.direction[0])
         win.spin_cam_diry.setValue(cam.direction[1])
         win.spin_cam_dirz.setValue(cam.direction[2])
+        self._sync_pose_ui_from_model()
         self.win.logger.log("已同步 3D 视图相机参数至 UI。", "INFO")
 
     def on_view_table_double_clicked(self, item):

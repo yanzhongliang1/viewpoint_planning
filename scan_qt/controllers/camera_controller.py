@@ -162,6 +162,196 @@ class CameraController:
         print("  direction     =", front)
         print("  best_distance =", self.camera_model.best_distance)
 
+    def pick_center_point(self):
+        """
+        [工业方案] 屏幕中心拾取：
+        从当前相机位置，沿相机朝向发射射线，检测与 Mesh 的交点。
+        如果击中：
+            1. 计算交点位置和法向。
+            2. 生成一个红色小球。
+            3. 生成一个 Z 轴与法向对齐的坐标系。
+            4. 将这些几何体存入 model 并刷新显示。
+        """
+        # 1. 获取当前相机参数
+        if self.view.vis is None: return
+        vc = self.view.vis.get_view_control()
+        cam_params = vc.convert_to_pinhole_camera_parameters()
+
+        # 提取相机位置和朝向 (World Frame)
+        # Open3D Extrinsic是 World->Camera。我们需要 Camera->World (即Pose)
+        extrinsic = np.asarray(cam_params.extrinsic)  # 4x4
+        pose = np.linalg.inv(extrinsic)
+
+        cam_pos = pose[:3, 3]
+        # 相机前方是 -Z (在Open3D相机坐标系中)，转到世界系就是 pose * [0,0,-1,0]
+        # 但更简单的做法是：ViewControl 的 get_front()
+        # 然而 get_front() 有时归一化不准，我们直接用射线投射
+        # 更好的方式：利用现有的 raycast 逻辑，起点 cam_pos，方向 cam_direction
+
+        # 为了精确，我们重新获取一次 front
+        # 注意：Open3D visualizer 内部维护的 front 指向屏幕内
+        info = vc.convert_to_pinhole_camera_parameters()
+        # 再次解算 Pose
+        R = info.extrinsic[:3, :3]
+        t = info.extrinsic[:3, 3]
+        center = -R.T @ t  # 相机世界坐标
+        front = R.T[:, 2]  # 相机 Z 轴反方向即为视线方向
+
+        # 2. 准备 Raycasting
+        base = self.scene_model.base_geom
+        if base is None:
+            print("没有几何体可拾取")
+            return
+
+        # 确保是用 t.geometry (高性能)
+        try:
+            # 如果是 Legacy Mesh，转 Tensor Mesh
+            if isinstance(base, o3d.geometry.TriangleMesh):
+                tmesh = o3d.t.geometry.TriangleMesh.from_legacy(base)
+            elif isinstance(base, o3d.geometry.PointCloud):
+                print("点云无法精确计算表面法向交点，请先重建网格。")
+                return
+            else:
+                return
+
+            scene = o3d.t.geometry.RaycastingScene()
+            scene.add_triangles(tmesh)
+
+            # 构造射线: [ox, oy, oz, dx, dy, dz]
+            # 稍微把起点往前推一点点，防止相机就在表面上
+            ray = np.concatenate([center, front]).astype(np.float32)
+            rays = o3d.core.Tensor([ray], dtype=o3d.core.Dtype.Float32)
+
+            # 投射
+            ans = scene.cast_rays(rays)
+            t_hit = ans['t_hit'].numpy()[0]
+
+            if np.isinf(t_hit):
+                print("未击中任何物体")
+                return
+
+            # 3. 计算击中信息
+            hit_pos = center + front * t_hit
+
+            # 获取法向 (primitive_normals)
+            # primitive_ids 是击中的三角形索引
+            tri_id = ans['primitive_ids'].numpy()[0]
+            if tri_id == -1: return
+
+            # 获取该三角形的法向 (面法向通常比插值法向更稳定用于对齐)
+            # 或者使用 primitive_normals 属性
+            hit_normal = ans['primitive_normals'].numpy()[0]
+
+            # 4. 生成可视化标记 (球 + 坐标系)
+            self._create_picker_marker(hit_pos, hit_normal)
+
+            # 5. 记录状态
+            self.scene_model.last_pick_pos = hit_pos
+            self.scene_model.last_pick_normal = hit_normal
+
+            print(f"拾取成功: Pos={hit_pos}, Normal={hit_normal}")
+
+            # 6. 刷新视图
+            self.view.render_scene(self.scene_model, recenter=False)
+
+        except Exception as e:
+            print(f"拾取过程出错: {e}")
+
+    def _create_picker_marker(self, pos, normal):
+        """
+        生成一个 Z 轴与 normal 对齐的坐标系，和一个小球
+        """
+        # 1. 黄色小球
+        radius = self.camera_model.best_distance * 0.02  # 动态大小
+        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius)
+        sphere.paint_uniform_color([1.0, 1.0, 0.0])  # 黄色
+        sphere.translate(pos)
+        sphere.compute_vertex_normals()
+
+        # 2. 坐标系 (Z轴对齐Normal)
+        # 目标 Z = normal
+        z_axis = normal / (np.linalg.norm(normal) + 1e-12)
+
+        # 寻找辅助轴构建坐标系
+        # 选取一个与 Z 不平行的任意向量 temp
+        if abs(z_axis[0]) < 0.9:
+            temp = np.array([1, 0, 0])
+        else:
+            temp = np.array([0, 1, 0])
+
+        y_axis = np.cross(z_axis, temp)
+        y_axis = y_axis / np.linalg.norm(y_axis)
+
+        x_axis = np.cross(y_axis, z_axis)
+        x_axis = x_axis / np.linalg.norm(x_axis)
+
+        # 旋转矩阵 [X, Y, Z]
+        R = np.column_stack((x_axis, y_axis, z_axis))
+
+        # 创建坐标轴
+        axes_size = radius * 5
+        axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size=axes_size)
+
+        # 先旋转，再平移 (变换矩阵)
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = pos
+        axes.transform(T)
+
+        # 组合
+        self.scene_model.picker_marker = [sphere, axes]
+
+    def align_camera_to_pick(self):
+        """
+        根据上一次拾取的点和法向，将相机移动到：
+        Pos = PickPos + Normal * BestDist
+        LookAt = PickPos
+        Up = 自动计算
+        """
+        if self.scene_model.last_pick_pos is None:
+            print("请先执行拾取操作")
+            return
+
+        target = self.scene_model.last_pick_pos
+        normal = self.scene_model.last_pick_normal
+        dist = self.camera_model.best_distance
+
+        # 理想相机位置：沿着法向往外退
+        cam_pos = target + normal * dist
+
+        # 理想朝向：从相机看向目标 -> direction = target - cam_pos = -normal * dist
+        # 归一化 direction = -normal
+        cam_dir = -normal
+
+        # 理想 Up 向量：
+        # 为了防止画面乱转，我们尽量保持 Up 向量与世界 Y 轴接近
+        # 除非法向就是 Y 轴，那就用 Z 轴
+        world_up = np.array([0, 1, 0], dtype=float)
+        if abs(np.dot(world_up, cam_dir)) > 0.95:
+            world_up = np.array([0, 0, 1], dtype=float)
+
+        # 这里的 set_camera_pose 会处理 up 的正交化
+        self.view.set_camera_pose(
+            cam_position=cam_pos,
+            cam_direction=-cam_dir,
+            cam_up=world_up,
+            best_distance=dist
+        )
+
+        # 同时更新 CameraModel 数据
+        self.camera_model.position = cam_pos
+        self.camera_model.direction = cam_dir
+        # up 需要正交化后存入
+        right = np.cross(cam_dir, world_up)
+        ortho_up = np.cross(right, cam_dir)
+        ortho_up /= np.linalg.norm(ortho_up)
+        self.camera_model.up = ortho_up
+
+        # 更新视锥显示
+        self.update_frustum()
+
+        print("视图已对齐到表面法向")
+
     # ===== 视锥生成 =====
 
     def update_frustum(self):

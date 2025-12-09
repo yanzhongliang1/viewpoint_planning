@@ -201,6 +201,12 @@ class ModelView:
         if model.show_bbox and model.bbox_geom: self.vis.add_geometry(model.bbox_geom)
         if model.show_voxel and model.voxel_grid: self.vis.add_geometry(model.voxel_grid)
         if model.show_normals and model.normal_lines: self.vis.add_geometry(model.normal_lines)
+
+        # ===== 新增：绘制拾取标记 =====
+        if model.picker_marker:
+            for geo in model.picker_marker:
+                self.vis.add_geometry(geo)
+
         if model.show_camera and model.camera_frustums:
             for f in model.camera_frustums: self.vis.add_geometry(f)
         if model.show_camera and getattr(model, "camera_axes_preview", None):
