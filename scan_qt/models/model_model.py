@@ -41,6 +41,12 @@ class ModelModel:
         self.show_scans = True
         # ====== 以上新增 ======
 
+        # 这是一个组合体，包含一个小球和一个坐标系
+        self.picker_marker = None
+        # 记录最近一次拾取的法向和位置，供同步视图使用
+        self.last_pick_pos = None  # np.array(3,)
+        self.last_pick_normal = None  # np.array(3,)
+
         # 开关
         self.show_bbox = False
         self.show_voxel = False

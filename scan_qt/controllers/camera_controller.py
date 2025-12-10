@@ -303,54 +303,71 @@ class CameraController:
 
     def align_camera_to_pick(self):
         """
-        根据上一次拾取的点和法向，将相机移动到：
-        Pos = PickPos + Normal * BestDist
-        LookAt = PickPos
-        Up = 自动计算
+        [优化版] 视线对齐模式：
+        不强制正对法向，而是保留当前用户的观察角度。
+        逻辑：以拾取点为中心，沿着当前相机与拾取点的连线，
+        将相机推/拉到 'Best Distance' 的位置。
         """
         if self.scene_model.last_pick_pos is None:
-            print("请先执行拾取操作")
+            self.view.logger.log("请先按 P 键拾取表面点", "WARNING")
             return
 
+        # 1. 获取目标点
         target = self.scene_model.last_pick_pos
-        normal = self.scene_model.last_pick_normal
-        dist = self.camera_model.best_distance
+        best_dist = self.camera_model.best_distance
 
-        # 理想相机位置：沿着法向往外退
-        cam_pos = target + normal * dist
+        # 2. 获取当前相机的完整位姿 (用于提取位置和 Up 向量)
+        vc = self.view.vis.get_view_control()
+        cam_params = vc.convert_to_pinhole_camera_parameters()
+        # Extrinsic 是 World -> Camera，逆矩阵才是 Camera -> World (Pose)
+        extrinsic = np.asarray(cam_params.extrinsic)
+        pose = np.linalg.inv(extrinsic)
 
-        # 理想朝向：从相机看向目标 -> direction = target - cam_pos = -normal * dist
-        # 归一化 direction = -normal
-        cam_dir = -normal
+        current_cam_pos = pose[:3, 3]  # 当前相机世界坐标
+        current_cam_up = pose[:3, 1]  # 当前相机 Up 向量 (Y轴)
 
-        # 理想 Up 向量：
-        # 为了防止画面乱转，我们尽量保持 Up 向量与世界 Y 轴接近
-        # 除非法向就是 Y 轴，那就用 Z 轴
-        world_up = np.array([0, 1, 0], dtype=float)
-        if abs(np.dot(world_up, cam_dir)) > 0.95:
-            world_up = np.array([0, 0, 1], dtype=float)
+        # 3. 计算方向向量：从 [目标] 指向 [当前相机]
+        # 这代表了用户当前的观察射线反方向
+        vec_obj_to_cam = current_cam_pos - target
+        dist_current = np.linalg.norm(vec_obj_to_cam)
 
-        # 这里的 set_camera_pose 会处理 up 的正交化
+        # 防止重合除零错误
+        if dist_current < 1e-6:
+            # 如果相机恰好在点上，回退到使用法向
+            direction = self.scene_model.last_pick_normal
+        else:
+            direction = vec_obj_to_cam / dist_current
+
+        # 4. 计算新的理想位置
+        # 沿视线方向，距离目标点 best_dist 处
+        new_cam_pos = target + direction * best_dist
+
+        # 5. 计算看向目标的朝向
+        # 相机看着目标，所以方向是 -direction
+        new_cam_dir = -direction
+
+        # 6. 执行移动
+        # 使用当前的 up 向量，保证画面不发生旋转滚转
         self.view.set_camera_pose(
-            cam_position=cam_pos,
-            cam_direction=-cam_dir,
-            cam_up=world_up,
-            best_distance=dist
+            cam_position=new_cam_pos,
+            cam_direction=-new_cam_dir,
+            cam_up=-current_cam_up,
+            best_distance=best_dist
         )
 
-        # 同时更新 CameraModel 数据
-        self.camera_model.position = cam_pos
-        self.camera_model.direction = cam_dir
-        # up 需要正交化后存入
-        right = np.cross(cam_dir, world_up)
-        ortho_up = np.cross(right, cam_dir)
+        # 7. 更新数据模型
+        self.camera_model.position = new_cam_pos
+        self.camera_model.direction = new_cam_dir
+        # Up 向量可能在 set_camera_pose 内部微调正交化，重新计算一下比较保险
+        right = np.cross(new_cam_dir, current_cam_up)
+        ortho_up = np.cross(right, new_cam_dir)
         ortho_up /= np.linalg.norm(ortho_up)
         self.camera_model.up = ortho_up
 
-        # 更新视锥显示
+        # 8. 更新视锥显示
         self.update_frustum()
 
-        print("视图已对齐到表面法向")
+        print(f"视图已调整距离: {best_dist}，保持原视角方向")
 
     # ===== 视锥生成 =====
 

@@ -19,7 +19,7 @@ class CameraModel:
         self.best_distance = 530
 
         # “成像分辨率”：用于采样/做简单深度缓冲时的宽高（这里先占位）
-        self.image_width = 640
+        self.image_width = 480
         self.image_height = 480
 
         # 位姿（世界坐标）
