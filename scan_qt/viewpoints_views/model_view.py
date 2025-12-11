@@ -207,18 +207,41 @@ class ModelView:
             for geo in model.picker_marker:
                 self.vis.add_geometry(geo)
 
-        if model.show_camera and model.camera_frustums:
-            for f in model.camera_frustums: self.vis.add_geometry(f)
-        if model.show_camera and getattr(model, "camera_axes_preview", None):
-            self.vis.add_geometry(model.camera_axes_preview)
+        # 4.1 当前视锥 (红色)
+        # 只有当 [启用相机模式] 且 [全局显示视锥] 为真时才显示
+        if model.show_camera and model.show_scan_frustums and model.camera_frustums:
+            for geo in model.camera_frustums:
+                self.vis.add_geometry(geo)
+
+        # 4.2 当前坐标轴
+        # 只有当 [启用相机模式] 且 [全局显示坐标] 为真时才显示
+        current_axes = getattr(model, "camera_axes_preview", None)
+        if model.show_camera and model.show_scan_coords and current_axes:
+            self.vis.add_geometry(current_axes)
         if model.show_scans and model.scan_clouds:
             for p in model.scan_clouds: self.vis.add_geometry(p)
 
-        for rec in model.view_records:
-            if not rec.visible: continue
-            if rec.frustum: self.vis.add_geometry(rec.frustum)
-            if rec.axes: self.vis.add_geometry(rec.axes)
-            if rec.scan_pcd and model.show_scans: self.vis.add_geometry(rec.scan_pcd)
+        if hasattr(model, 'view_records'):
+            for rec in model.view_records:
+                # 1. 检查单帧是否可见 (列表里的勾选框)
+                # 使用 getattr 防止旧数据没有 visible 属性导致崩溃
+                if not getattr(rec, 'visible', True):
+                    continue
+
+                # 2. 绘制视锥 (Frustum)
+                # 判断全局开关 model.show_scan_frustums 和 对象本身是否有 frustum 数据
+                if model.show_scan_frustums and getattr(rec, 'frustum', None):
+                    self.vis.add_geometry(rec.frustum)
+
+                # 3. 绘制坐标系 (Axes)
+                # 判断全局开关 model.show_scan_coords 和 对象本身是否有 axes 数据
+                if model.show_scan_coords and getattr(rec, 'axes', None):
+                    self.vis.add_geometry(rec.axes)
+
+                # 4. 绘制点云 (PCD)
+                if model.show_scans and getattr(rec, 'scan_pcd', None):
+                    self.vis.add_geometry(rec.scan_pcd)
+        # ========== [修改结束] ==========
 
         if recenter:
             self._reset_camera_from_model(model)

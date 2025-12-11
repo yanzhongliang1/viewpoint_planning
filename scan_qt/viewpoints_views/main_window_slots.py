@@ -112,6 +112,22 @@ class MainWindowSlots(QObject):
             return (0.0, 0.0, 1.0)
         return (1.0, 1.0, 1.0)
 
+    # ========== [新增开始] ==========
+    def on_show_scan_frustums_toggled(self, checked):
+        """切换是否显示历史扫描的视锥"""
+        self.win.model.show_scan_frustums = bool(checked)
+        # 强制重绘 (recenter=False 保持当前视角)
+        self.win.view3d.render_scene(self.win.model, recenter=False)
+        self.win.logger.log(f"历史视锥显示: {checked}", "INFO")
+
+    def on_show_scan_coords_toggled(self, checked):
+        """切换是否显示历史扫描的坐标轴"""
+        self.win.model.show_scan_coords = bool(checked)
+        self.win.view3d.render_scene(self.win.model, recenter=False)
+        self.win.logger.log(f"历史坐标轴显示: {checked}", "INFO")
+
+    # ========== [新增结束] ==========
+
     def on_show_normals_toggled(self, state):
         self.win.controller.toggle_show_normals(bool(state))
 

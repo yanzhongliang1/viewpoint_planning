@@ -39,6 +39,9 @@ class ModelModel:
         self.camera_axes_preview = None  # 当前参数下的预览坐标系
         self.show_camera = True
         self.show_scans = True
+        # ===== 新增：显示控制状态 =====
+        self.show_scan_frustums = True  # 是否显示扫描帧的视锥
+        self.show_scan_coords = False  # 是否显示扫描帧的坐标轴
         # ====== 以上新增 ======
 
         # 这是一个组合体，包含一个小球和一个坐标系

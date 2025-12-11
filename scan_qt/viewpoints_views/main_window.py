@@ -462,8 +462,28 @@ class MainWindow(QMainWindow):
         l_list = QVBoxLayout(grp_list)
         l_list.setContentsMargins(5, 5, 5, 5)
 
+        # ========== [新增开始] ==========
+        # 添加可视化控制复选框
+        l_vis_opts = QHBoxLayout()
+
+        self.cb_show_scan_frustums = QCheckBox("显示视锥")
+        # 从 Model 获取默认值 (model_model.py 中已定义)
+        self.cb_show_scan_frustums.setChecked(self.model.show_scan_frustums)
+        self.cb_show_scan_frustums.toggled.connect(self.slots.on_show_scan_frustums_toggled)
+
+        self.cb_show_scan_coords = QCheckBox("显示坐标")
+        self.cb_show_scan_coords.setChecked(self.model.show_scan_coords)
+        self.cb_show_scan_coords.toggled.connect(self.slots.on_show_scan_coords_toggled)
+
+        l_vis_opts.addWidget(self.cb_show_scan_frustums)
+        l_vis_opts.addWidget(self.cb_show_scan_coords)
+        l_vis_opts.addStretch()  # 靠左对齐
+
+        l_list.addLayout(l_vis_opts)
+        # ========== [新增结束] ==========
+
         self.view_table = QTableWidget(0, 3)
-        self.view_table.setHorizontalHeaderLabels(["名称", "显", "色"])
+        self.view_table.setHorizontalHeaderLabels(["名称", "显示", "颜色"])
         header = self.view_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
