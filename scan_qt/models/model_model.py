@@ -20,33 +20,17 @@ class ModelModel:
         self.bbox_geom = None
         self.voxel_grid = None
         self.normal_lines = None
-        # ===== 新增：多视点 / 多扫描帧记录 =====
-        # 每个视点记录一个对象，里面包含：
-        # - name: 视点名称
-        # - color: np.array(3,) 颜色
-        # - visible: 是否显示
-        # - frustum: 视锥 LineSet
-        # - axes: 小坐标系 TriangleMesh
-        # - scan_pcd: 该视点的扫描点云（可为 None）
         self.view_records = []
-        # ===== 新增结束 =====
 
-        # ====== 新增：相机 & 扫描可视化 ======
-        # 一个或多个视锥线框
-        self.camera_frustums = []  # list[o3d.geometry.LineSet]
-        # 多帧扫描点云（每次扫描一帧，加一个点云）
-        self.scan_clouds = []  # list[o3d.geometry.PointCloud]
+        self.camera_frustums = []
+        self.scan_clouds = []
         self.camera_axes_preview = None  # 当前参数下的预览坐标系
         self.show_camera = True
         self.show_scans = True
-        # ===== 新增：显示控制状态 =====
         self.show_scan_frustums = True  # 是否显示扫描帧的视锥
         self.show_scan_coords = False  # 是否显示扫描帧的坐标轴
-        # ====== 以上新增 ======
 
-        # 这是一个组合体，包含一个小球和一个坐标系
         self.picker_marker = None
-        # 记录最近一次拾取的法向和位置，供同步视图使用
         self.last_pick_pos = None  # np.array(3,)
         self.last_pick_normal = None  # np.array(3,)
 
