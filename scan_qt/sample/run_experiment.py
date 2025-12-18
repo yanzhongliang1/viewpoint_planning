@@ -8,7 +8,8 @@ from simulation_env import VirtualScanner
 import viz_utils
 
 # --- 全局设置 ---
-MODEL_PATH = "D:/Viewpoint Planning/Auto_Scan/scan_qt/scan_qt/resources/test1模型/test_1.ply"
+# "D:/Viewpoint Planning/Auto_Scan/scan_qt/scan_qt/resources/test1模型/test_1.ply"
+MODEL_PATH = "D:/Viewpoint Planning/Auto_Scan/scan_qt/scan_qt/resources/15机匣模型/15-0.66.ply"
 TARGET_COVERAGE = 98
 MAX_STEPS = 40
 
@@ -81,7 +82,10 @@ def main():
 
     # 初始化扫描仪 (使用高模作为场景)
     scanner = VirtualScanner(
-        mesh
+        mesh,
+        min_scan_dist=0.4,  # 物理极限：比规划器稍宽，允许一点误差
+        max_scan_dist=0.8,
+        max_incidence_angle=70.0  # 物理极限：超过70度就不采了
     )
     scanner.scene_mesh = mesh
     scanner.scene_pcd = mesh.sample_points_uniformly(number_of_points=100000)
