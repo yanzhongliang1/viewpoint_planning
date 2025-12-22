@@ -1,174 +1,195 @@
-import sys
-import os
 import time
-import math
-import numpy as np
-
-# --- 路径设置 (确保能找到 scan_qt 包) ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
-
-from scan_qt.test.robot_comm import RobotComm, Frames
-from scan_qt.test.robot_ik import RobotIK
-from scan_qt.test.robot_path import RobotPath
-
-# --- 配置参数 ---
-# 强制待机位置 (关节角 rad)
-HOME_JOINTS = [0, -math.pi / 2, 0, -math.pi / 2, 0, 0]
-# 视点文件路径
-VIEWPOINTS_FILE = os.path.join(current_dir, "resources", "viewpoints.txt")
-# 理想拍摄扇区 (机器人前方多少度)
-IDEAL_SECTOR_DEG = 45.0
+import sys
+from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 
 
-class AutoScanner:
-    def __init__(self):
-        print("=== 初始化扫描系统 ===")
-        self.rc = RobotComm(start_sim=True)
-        self.ik = RobotIK(self.rc)
-        self.path = RobotPath(self.rc)
+class IKPathTester:
+    def __init__(self, robot_base="/UR5", tip_name="tip", target_name="/target", goal_name="/goal"):
+        """
+        初始化测试类
+        :param robot_base: 机器人的基座名称
+        :param tip_name: 机器人末端 Dummy 的相对路径或名称
+        :param target_name: 目标 Dummy 的名称
+        """
+        print("=== 初始化 IK Path Tester (Class Version) ===")
+        self.client = RemoteAPIClient()
+        self.sim = self.client.require('sim')
+        self.simIK = self.client.require('simIK')
 
-        # 物理参数
-        self.timeout = 20
-        self.joint_tolerance = 0.02
+        # 场景对象名称配置
+        self.cfg_base = robot_base
+        self.cfg_tip = f"{robot_base}/{tip_name}"  # 假设 tip 在机器人下
+        self.cfg_target = target_name
+        self.cfg_goal = goal_name
 
-    def load_data(self):
-        """读取视点文件并创建可视化"""
-        if not os.path.exists(VIEWPOINTS_FILE):
-            print(f"[Error] 找不到文件: {VIEWPOINTS_FILE}")
-            self.rc.stop()
-            sys.exit(1)
+        # 句柄缓存
+        self.h_base = -1
+        self.h_tip = -1
+        self.h_target = -1
+        self.h_joints = []
+        self.h_goal = -1
 
-        print(f"[System] 读取视点: {VIEWPOINTS_FILE}")
-        self.path.load_viewpoints_from_txt(VIEWPOINTS_FILE)
-        self.path.create_visuals()
-        print(f"[System] 共加载 {len(self.path.viewpoints)} 个视点")
+        # 状态标志
+        self.dyn_model = False
+        self.generated_path = []
+
+    def _init_handles(self):
+        """获取场景中的句柄"""
+        print("-> 获取对象句柄...")
+        try:
+            self.h_base = self.sim.getObject(self.cfg_base)
+            self.h_tip = self.sim.getObject(self.cfg_tip)
+            self.h_target = self.sim.getObject(self.cfg_target)
+            self.h_goal = self.sim.getObject(self.cfg_goal)
+
+            self.h_joints = []
+            for i in range(1, 7):
+                j_name = f"{self.cfg_base}/joint{i}"
+                self.h_joints.append(self.sim.getObject(j_name))
+
+            # 自动检测动力学模式
+            self.dyn_model = self.sim.isDynamicallyEnabled(self.h_joints[0])
+            print(f"   [Info] 动力学模式 (Dynamic): {self.dyn_model}")
+            print("   [Info] 句柄获取成功。")
+            return True
+
+        except Exception as e:
+            print(f"   [Error] 获取句柄失败: {e}")
+            print(f"   请检查场景中是否存在: {self.cfg_base}, {self.cfg_tip}, {self.cfg_target}")
+            return False
+
+    def generate_ik_path(self, steps=300):
+        """
+        调用 SimIK 生成路径
+        对应 Lua: simIK.generatePath
+        """
+        print(f"-> 计算 IK 路径 ({steps}步)...")
+
+        # 1. 创建环境
+        ik_env = self.simIK.createEnvironment()
+        ik_group = self.simIK.createGroup(ik_env)
+
+        # 2. 场景映射 (Scene -> IK Environment)
+        # 这一步确立了 Start Pose (机器人当前位置) 和 Goal Pose (Target的位置)
+        try:
+            ik_element, sim_to_ik_map, ik_to_sim_map = self.simIK.addElementFromScene(
+                ik_env,
+                ik_group,
+                self.h_base,
+                self.h_tip,
+                self.h_target,
+                self.simIK.constraint_pose
+            )
+
+            # 从 Map 中获取 IK 环境内部的句柄
+            ik_tip_handle = sim_to_ik_map[self.h_tip]
+            ik_joint_handles = [sim_to_ik_map[h] for h in self.h_joints]
+
+            # 3. 生成路径
+            # path 是一个扁平的 list: [j1_0, j2_0... j6_0, j1_1, j2_1...]
+            self.generated_path = self.simIK.generatePath(
+                ik_env,
+                ik_group,
+                ik_joint_handles,
+                ik_tip_handle,
+                steps
+            )
+
+            if not self.generated_path:
+                print("   [Error] 路径生成返回为空！目标可能不可达。")
+                return False
+
+            print(f"   [Success] 路径已生成，包含 {len(self.generated_path) // 6} 个航点。")
+            return True
+
+        except Exception as e:
+            print(f"   [Error] SimIK 计算出错: {e}")
+            return False
+        finally:
+            # 4. 清理环境
+            self.simIK.eraseEnvironment(ik_env)
+
+    def _hop_through_configs(self, reverse=False):
+        """
+        执行路径运动
+        对应 Lua: hopThroughConfigs
+        """
+        path = self.generated_path
+        dof = 6
+        num_configs = len(path) // dof
+
+        # 确定遍历顺序
+        if not reverse:
+            indices = range(0, num_configs, 1)
+        else:
+            indices = range(num_configs - 1, -1, -1)
+
+        # 执行循环
+        for i in indices:
+            start_idx = i * dof
+            # 切片获取当前步的6个关节角
+            current_joints = path[start_idx: start_idx + dof]
+
+            if self.dyn_model:
+                # 动力学模式
+                for h, val in zip(self.h_joints, current_joints):
+                    self.sim.setJointTargetPosition(h, val)
+            else:
+                # 运动学模式 (瞬移)
+                for h, val in zip(self.h_joints, current_joints):
+                    self.sim.setJointPosition(h, val)
+
+            # 推进一步仿真
+            self.sim.step()
 
     def run(self):
-        """主执行循环"""
+        """主运行逻辑"""
+        # 1. 启动仿真
+        self.sim.setStepping(True)
+        self.sim.startSimulation()
+
         try:
-            # 1. 系统预热 & 归位
-            print("\n[Step0] 机器人归位(HomeCheck)...")
-            self.rc.set_ur5_angles(HOME_JOINTS, instant=False)
-            time.sleep(2.0)  # 给予物理运动时间
+            # 2. 初始化
+            if not self._init_handles():
+                return
 
-            # 2. 开始循环
-            print("\n >> > 开始自动化扫描任务 << < ")
+            # 3. 生成路径
+            # 注意：这里生成的路径是从 [当前位置] -> [Target]
+            if not self.generate_ik_path(steps=300):
+                return
 
-            for i, vp in enumerate(self.path.viewpoints):
-                self._process_single_viewpoint(i, vp)
-            print("\n>> > 所有任务完成 << < ")
+            print("-> 开始循环执行 (按 Ctrl+C 停止)...")
+
+            # 4. 循环运动
+            while True:
+                # 去程
+                print("   >>> Forward (Start -> Target)")
+                self._hop_through_configs(reverse=False)
+
+                # 回程
+                print("   <<< Backward (Target -> Start)")
+                self._hop_through_configs(reverse=True)
 
         except KeyboardInterrupt:
-            print("\n[System]用户中断任务")
+            print("[System] 用户手动停止。")
+        except Exception as e:
+            print(f"[System] 运行时错误: {e}")
         finally:
-            print("[System] 正在停止仿真...")
-            time.sleep(2)
-            self.rc.stop()
+            self.stop()
 
-    def _process_single_viewpoint(self, index, vp):
-        print(f"\n== == == == == == == == [Viewpoint ID: {vp.id} | {vp.name}] == == == == == == == == ")
-
-        # ------------------------------------------------------
-        # Phase 1: 转台对齐 (Turntable Alignment)
-        # ------------------------------------------------------
-        print("[Phase 1] 转台调整...")
-
-        # 获取基准位置
-        robot_pos = self.rc.sim.getObjectPosition(self.rc.handles.base, self.rc.handles.world)
-        table_pos = self.rc.sim.getObjectPosition(self.rc.handles.turntable, self.rc.handles.world)
-
-        # 计算当前视点相对于转台的角度 (注意：必须取当前的实时位置)
-        # 此时 Dummy 的位置可能还没更新，所以我们通过 RobotPath 算一下
-        curr_vp_pos, _ = self.path.get_vp_world_pose(index)
-
-        # 向量角度计算
-        base_azimuth = math.atan2(robot_pos[1] - table_pos[1], robot_pos[0] - table_pos[0])
-        ideal_azimuth = base_azimuth + math.radians(IDEAL_SECTOR_DEG)
-        vp_azimuth = math.atan2(curr_vp_pos[1] - table_pos[1], curr_vp_pos[0] - table_pos[0])
-
-        # 计算偏差并旋转
-        diff = ideal_azimuth - vp_azimuth
-        while diff > math.pi: diff -= 2 * math.pi
-        while diff < -math.pi: diff += 2 * math.pi
-        curr_table_angle = self.rc.get_turntable_angle()
-        target_table_angle = curr_table_angle + diff
-
-        print(f" -> 目标转台角度: {math.degrees(target_table_angle):.1f}° (旋转 {math.degrees(diff):.1f}°)")
-
-        self.rc.set_turntable_angle(target_table_angle, instant=False)
-
-        # 等待转台物理停止
-        if not self._wait_for_table(target_table_angle):
-            print(" -> [Error] 转台超时，跳过此点。")
-            return
-
-        # ------------------------------------------------------
-        # Phase 2: 刷新坐标 (Update World Pose)
-        # ------------------------------------------------------
-        # 核心：转台动了，Receiver动了，必须更新 Dummy 的 World 坐标
-        self.path.update_all_dummies_pose()
-
-        # 获取最终真值
-        final_pos, final_quat = self.path.get_vp_world_pose(index)
-        print(f"[Phase 2] 更新世界坐标:")
-        print(f" -> Pos: [{final_pos[0]:.4f}, {final_pos[1]:.4f}, {final_pos[2]:.4f}]")
-
-        # ------------------------------------------------------
-        # Phase 3: 逆解与移动 (IK & Move)
-        # ------------------------------------------------------
-        print("[Phase 3] 逆解与移动...")
-
-        solution = self.ik.solve(final_pos, final_quat, ref_frame=Frames.WORLD)
-
-        if solution:
-            target_joints = list(solution)
-
-            # 检查是否需要移动
-            curr_joints = self.rc.get_ur5_angles()
-            move_diff = max([abs(a - b) for a, b in zip(curr_joints, target_joints)])
-            print(f" -> 关节变动量: {move_diff:.4f} rad")
-
-            if move_diff > 0.01:
-                print(" -> 🚀 机器人移动中...")
-                self.rc.set_ur5_angles(target_joints, instant=False)
-
-                if self._wait_for_robot(target_joints):
-                    print(" -> ✅ 到位，模拟拍摄 (Dummy变绿)")
-                    self.rc.sim.setObjectColor(vp.handle, 0, self.rc.sim.colorcomponent_ambient_diffuse, [0, 1, 0])
-                    time.sleep(2.0)  # 模拟拍照时间
-                else:
-                    print(" -> ⚠️ 移动超时。")
-            else:
-                print(" -> 机器人已在位置，直接拍摄。")
-                self.rc.sim.setObjectColor(vp.handle, 0, self.rc.sim.colorcomponent_ambient_diffuse, [0, 1, 0])
-                time.sleep(1.0)
-        else:
-            print(" -> ❌ IK 无解 (Dummy变红)")
-            self.rc.sim.setObjectColor(vp.handle, 0, self.rc.sim.colorcomponent_ambient_diffuse, [1, 0, 0])
-
-    # --- 辅助等待函数 --
-    def _wait_for_table(self, target):
-        start = time.time()
-        while time.time() - start < self.timeout:
-            self.rc.step(wait=True)
-            if abs(self.rc.get_turntable_angle() - target) < 0.01:
-                return True
-        return False
-
-    def _wait_for_robot(self, target_joints):
-        start = time.time()
-        while time.time() - start < self.timeout:
-            self.rc.step(wait=True)
-            self.path.update_trail()  # 画轨迹
-            curr = self.rc.get_ur5_angles()
-            if max([abs(c - t) for c, t in zip(curr, target_joints)]) < self.joint_tolerance:
-                return True
-        return False
+    def stop(self):
+        """停止仿真"""
+        print("-> 停止仿真...")
+        self.sim.stopSimulation()
 
 
+# --- 程序入口 ---
 if __name__ == "__main__":
-    app = AutoScanner()
-    app.load_data()
-    app.run()
+    # 实例化并运行
+    # 请确保这里的名字与你 CoppeliaSim 场景中的层级一致
+    tester = IKPathTester(
+        robot_base="/UR5",
+        tip_name="tip",  # 组合后寻找 /UR5/tip
+        target_name="/target"
+    )
+    tester.run()
