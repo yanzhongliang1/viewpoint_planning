@@ -142,7 +142,7 @@ class RobotWindowSlots:
         self.zmq_mutex.lock()
         try:
             logging.info("执行归位 (Homing)...")
-            self.rc.set_ur5_angles((0, -math.pi / 2, 0, -math.pi / 2, 0, 0))
+            self.rc.set_ur5_angles((0, 0, 0, 0, 0, 0))
             self.rc.set_turntable_angle(0.0)
         finally:
             self.zmq_mutex.unlock()
