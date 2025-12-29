@@ -12,15 +12,15 @@ class CameraModel:
         self.fov_deg = 30
 
         # DOF: 近远裁剪平面
-        self.near = 430
-        self.far = 680
+        self.near = 250  # 430
+        self.far = 330   # 680
 
         # 扫描最佳距离
-        self.best_distance = 530
+        self.best_distance = 280 #530
 
         # “成像分辨率”：用于采样/做简单深度缓冲时的宽高（这里先占位）
-        self.image_width = 320
-        self.image_height = 320
+        self.image_width = 160
+        self.image_height = 160
 
         # 位姿（世界坐标）
         self.position = np.array([0.0, 0.0, 1.0], dtype=float)
