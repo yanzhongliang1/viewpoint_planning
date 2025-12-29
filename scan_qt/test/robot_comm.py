@@ -10,8 +10,11 @@ class Frames:
     WORLD = "world"
     BASE = "base"
     TURNTABLE = "turntable"
+    TURTLE_BASE = "turtle_base"
     SCANNER = "scanner"
     OBJECT = "object"
+    POWERSCAN = "powerscan"
+    FLOOR = "floor"
 
 
 DEFAULT_PATHS = {
@@ -19,6 +22,9 @@ DEFAULT_PATHS = {
     Frames.TURNTABLE: "/turtle_joint",
     Frames.OBJECT: "/receiver",
     Frames.SCANNER: "/UR5/scan",
+    Frames.TURTLE_BASE: "/turtle",
+    Frames.FLOOR: "/Floor",
+    Frames.POWERSCAN: "/UR5/powerscan",
     Frames.WORLD: "world"
 }
 
@@ -32,9 +38,11 @@ class RobotComm:
         self.client = RemoteAPIClient(host=host, port=port)
         self.sim = self.client.require("sim")
         self.simIK = self.client.require("simIK")
+        self.simOMPL = self.client.require("simOMPL")
 
         # 2. 初始化句柄 (全部作为成员属性)
         self.handles = self._init_handles()
+        self._init_collision_collections()
 
         # 3. 仿真状态
         self.sync_mode = False
@@ -48,9 +56,12 @@ class RobotComm:
         # 基础组件
         h.base = self.sim.getObject(DEFAULT_PATHS[Frames.BASE])
         h.turntable = self.sim.getObject(DEFAULT_PATHS[Frames.TURNTABLE])
+        h.turtle_base = self.sim.getObject(DEFAULT_PATHS[Frames.TURTLE_BASE])
         h.receiver = self.sim.getObject(DEFAULT_PATHS[Frames.OBJECT])
         h.scan = self.sim.getObject(DEFAULT_PATHS[Frames.SCANNER])
+        h.powerscan = self.sim.getObject(DEFAULT_PATHS[Frames.POWERSCAN])
         h.world = self.sim.handle_world
+        h.floor = self.sim.getObject(DEFAULT_PATHS[Frames.FLOOR])
 
         h.target = self.sim.getObject("/target")
         h.tip = self.sim.getObject("/UR5/tip")
@@ -63,6 +74,27 @@ class RobotComm:
 
         if self.verbose: print(f"[RobotComm] Handles loaded. UR5 joints: {len(h.ur5_joints)}")
         return h
+
+    def _init_collision_collections(self):
+        """
+        构建碰撞集合
+        Robot: 包含 UR5 Base 及其所有子对象 (这也包括了 scan 和 powerscan)
+        Env: 包含 地板 + 转台
+        """
+        # 1. Robot Collection
+        self.col_robot = self.sim.createCollection(0)
+        # 将整个 UR5 树加入
+        self.sim.addItemToCollection(self.col_robot, self.sim.handle_tree, self.handles.base, 0)
+
+        # 2. Environment Collection
+        self.col_env = self.sim.createCollection(0)
+        if self.handles.turtle_base != -1:
+            self.sim.addItemToCollection(self.col_env, self.sim.handle_tree, self.handles.turtle_base, 0)
+        if self.handles.floor != -1:
+            self.sim.addItemToCollection(self.col_env, self.sim.handle_tree, self.handles.floor, 0)
+
+        if self.verbose:
+            print(f"[RobotComm] Collections Ready. RobotID: {self.col_robot}, EnvID: {self.col_env}")
 
     # ---------------------------------------------------------
     # 1. 仿真流程控制 (Simulation Control)

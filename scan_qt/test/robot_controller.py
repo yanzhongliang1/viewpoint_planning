@@ -5,10 +5,7 @@ import time
 import math
 import numpy as np
 
-# --- 路径设置 (确保能找到 scan_qt 包) ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
+
 
 from scan_qt.test.robot_comm import RobotComm, Frames
 from scan_qt.test.robot_ik import RobotIK
@@ -16,9 +13,9 @@ from scan_qt.test.robot_path import RobotPath
 
 # --- 配置参数 ---
 # 强制待机位置 (关节角 rad)
-HOME_JOINTS = [0, -math.pi / 2, 0, -math.pi / 2, 0, 0]
+HOME_JOINTS = [0, 0, 0, 0, 0, 0]
 # 视点文件路径
-VIEWPOINTS_FILE = os.path.join(current_dir, "resources", "viewpoints.txt")
+VIEWPOINTS_FILE = "D:/Viewpoint Planning/Auto_Scan/scan_qt/scan_qt/resources/viewpoints.txt"
 # 理想拍摄扇区 (机器人前方多少度)
 IDEAL_SECTOR_DEG = 45.0
 

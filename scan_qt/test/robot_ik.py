@@ -1,4 +1,4 @@
-# scan_qt/test/robot_ik.py
+#scan_qt/test/robot_ik.py
 from typing import Optional, Tuple
 from scan_qt.test.robot_comm import RobotComm, Frames
 
@@ -79,7 +79,6 @@ class RobotIK:
 
             # 1 = Success, 2 = Success with error
             success = (result == 1) or (result == 2)
-            print(f"result:{result},success:{success}")
 
             if success:
                 solved_angles = self.rc.get_ur5_angles()
